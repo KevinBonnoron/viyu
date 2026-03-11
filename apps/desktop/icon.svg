@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Viyu</title>
+  <defs>
+    <linearGradient id="viyu-accent" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f4b942"/>
+      <stop offset="1" stop-color="#e69a27"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="17" fill="url(#viyu-accent)"/>
+  <path d="M27 18.5 48 32 27 45.5Z" fill="#181818"/>
+</svg>
