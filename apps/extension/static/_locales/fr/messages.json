@@ -1,0 +1,41 @@
+{
+  "extensionName": { "message": "Compagnon YouTube pour Viyu" },
+  "extensionDescription": {
+    "message": "Synchronise les abonnements et l’historique du compte YouTube connecté dans ce navigateur vers un profil Viyu. Vos cookies YouTube restent dans le navigateur."
+  },
+  "pairHelp": {
+    "message": "Dans Viyu, ouvrez Sources, puis « Associer une extension » sur la carte YouTube, et collez ici le code d’association."
+  },
+  "pairLabel": { "message": "Code d’association" },
+  "pairButton": { "message": "Associer" },
+  "profileLabel": { "message": "Profil" },
+  "serverLabel": { "message": "Serveur" },
+  "lastSyncLabel": { "message": "Dernière synchro" },
+  "neverSynced": { "message": "Jamais" },
+  "syncing": { "message": "Synchronisation…" },
+  "syncButton": { "message": "Synchroniser" },
+  "unpairButton": { "message": "Dissocier" },
+  "unpairConfirm": {
+    "message": "Dissocier cette extension de Viyu ? Ce qui a déjà été synchronisé reste dans Viyu."
+  },
+  "syncSummary": {
+    "message": "$1 abonnements sur YouTube : $2 ajoutés, $3 retirés. Historique : $4 ajoutées, $5 mises à jour."
+  },
+  "privacyNote": {
+    "message": "Viyu ne reçoit que des identifiants de chaînes et de vidéos. La synchronisation a lieu quand YouTube est ouvert dans ce navigateur, au plus toutes les 6 heures, ou à votre demande."
+  },
+  "errorSignedOut": {
+    "message": "Connectez-vous à YouTube dans ce navigateur, puis relancez la synchronisation."
+  },
+  "errorYoutubeUnavailable": {
+    "message": "Impossible de lire YouTube. Réessayez dans un instant."
+  },
+  "errorViyuUnreachable": { "message": "Impossible de joindre Viyu." },
+  "errorViyuRefused": { "message": "Viyu a refusé la synchronisation :" },
+  "errorUnpaired": {
+    "message": "Cette extension n’est plus associée à Viyu. Associez-la de nouveau."
+  },
+  "errorPairingInvalid": {
+    "message": "Ce code d’association est invalide ou a expiré. Créez-en un nouveau dans Viyu."
+  }
+}

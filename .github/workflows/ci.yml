@@ -1,0 +1,594 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Weekly rebuild + republish of the Docker image so it picks up the latest yt-dlp
+  # (YouTube extractors break often) and Debian security updates; also re-runs the audits.
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+  # A release: release.yml calls this workflow with the tag release-please just created. A tag
+  # created with the workflow's own token triggers no other workflow, so releases come this way,
+  # never from a tag push.
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (vMAJOR.MINOR.PATCH) on the checked-out commit
+        type: string
+        required: true
+
+# Least privilege by default; jobs widen only what they need.
+permissions:
+  contents: read
+
+# Concurrency is per job (not per workflow) so a newer run can cancel superseded
+# build/test/publish work on the same ref without ever cutting a Pages deployment
+# (see the `deploy-docs` job, which has its own non-cancelling group). A release run has its
+# own groups, keyed by its tag, and is never cancelled.
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  BUN_VERSION: "1.4.4"
+
+jobs:
+  # Decides which jobs are relevant from the changed paths. Uses plain `git diff`
+  # (no third-party action, no secrets), so it works for fork PRs.
+  #
+  #   area             paths                                                 jobs
+  #   client           apps/client/                                          Web UI (build + tests), Lint (web)
+  #   extension        apps/extension/                                       Extension (tests + build), Lint (web)
+  #   server           apps/server/                                          Go (server), Docker
+  #   desktop          apps/desktop/                                         Go (desktop)
+  #   android          apps/android/                                         Android
+  #   docker           docker/, .dockerignore                                Docker
+  #   docs             apps/website/, docs/                                  Docs, Lint (web)
+  #   deps             lockfiles, package.json, go.mod/go.sum, flake          Audit
+  #   everything       .github/, flake, VERSION, tooling files, or any        all of the above
+  #                    path not listed here (README, LICENSE... trigger nothing)
+  #
+  # Pull requests build the Docker image for amd64 only, without pushing. Pushes to main
+  # publish the multi-arch image when the application changed; releases and manual runs run
+  # everything and also publish the desktop and server binaries and the Android APK. The
+  # weekly schedule only rebuilds the image (and the UI it embeds) and runs the audits.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-changes
+      cancel-in-progress: ${{ !inputs.tag }}
+    outputs:
+      client: ${{ steps.filter.outputs.client }}
+      extension: ${{ steps.filter.outputs.extension }}
+      server: ${{ steps.filter.outputs.server }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      android: ${{ steps.filter.outputs.android }}
+      docker: ${{ steps.filter.outputs.docker }}
+      docs: ${{ steps.filter.outputs.docs }}
+      lint-web: ${{ steps.filter.outputs.lint-web }}
+      go: ${{ steps.filter.outputs.go }}
+      ui: ${{ steps.filter.outputs.ui }}
+      audit: ${{ steps.filter.outputs.audit }}
+      release: ${{ steps.filter.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Compute changed areas
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          BEFORE_SHA: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          client=false extension=false server=false desktop=false android=false
+          docker=false docs=false deps=false everything=false
+          range=""
+
+          case "$EVENT_NAME" in
+            pull_request)
+              # HEAD is the merge commit: its first parent is the current base tip.
+              range="HEAD^1 HEAD"
+              ;;
+            push)
+              if [[ -n "$RELEASE_TAG" ]]; then
+                everything=true
+              elif [[ "$BEFORE_SHA" =~ ^0+$ ]] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+                echo "No usable previous commit; running everything."
+                everything=true
+              else
+                range="$BEFORE_SHA $SHA"
+              fi
+              ;;
+            workflow_dispatch)
+              everything=true
+              ;;
+          esac
+
+          if [[ -n "$range" ]]; then
+            # shellcheck disable=SC2086
+            files="$(git diff --name-only $range)"
+            echo "Changed files:"
+            echo "$files"
+            while IFS= read -r file; do
+              [[ -z "$file" ]] && continue
+              if [[ "$file" =~ (^|/)(bun\.lock|package\.json|go\.mod|go\.sum)$ || "$file" =~ ^flake\.(nix|lock)$ ]]; then
+                deps=true
+              fi
+              case "$file" in
+                apps/client/*) client=true ;;
+                apps/extension/*) extension=true ;;
+                apps/server/*) server=true ;;
+                apps/desktop/*) desktop=true ;;
+                apps/android/*) android=true ;;
+                docker/* | .dockerignore) docker=true ;;
+                apps/website/* | docs/*) docs=true ;;
+                README.md | LICENSE | AGENTS.md | CLAUDE.md | .gitignore | .envrc) ;;
+                *) everything=true ;;
+              esac
+            done <<< "$files"
+          fi
+
+          if [[ "$everything" == true ]]; then
+            client=true extension=true server=true desktop=true android=true docker=true docs=true deps=true
+          fi
+
+          go=false
+          if [[ "$server" == true || "$desktop" == true ]]; then go=true; fi
+          lint_web=false
+          if [[ "$client" == true || "$extension" == true || "$docs" == true ]]; then lint_web=true; fi
+          # A pull request builds the image when its recipe or the server changes; main also
+          # republishes it when the UI it embeds changes.
+          if [[ "$EVENT_NAME" != pull_request && "$client" == true ]]; then docker=true; fi
+          if [[ "$server" == true ]]; then docker=true; fi
+          audit="$deps"
+          release=false
+          if [[ -n "$RELEASE_TAG" || "$EVENT_NAME" == workflow_dispatch ]]; then release=true; fi
+
+          if [[ "$EVENT_NAME" == schedule ]]; then
+            client=false extension=false server=false desktop=false android=false docs=false
+            go=false lint_web=false docker=true audit=true
+          fi
+          # The UI artifacts are embedded by the Go packages, the image and the APK.
+          ui=false
+          if [[ "$client" == true || "$go" == true || "$android" == true || "$docker" == true ]]; then ui=true; fi
+
+          {
+            echo "client=$client"
+            echo "extension=$extension"
+            echo "server=$server"
+            echo "desktop=$desktop"
+            echo "android=$android"
+            echo "docker=$docker"
+            echo "docs=$docs"
+            echo "lint-web=$lint_web"
+            echo "go=$go"
+            echo "ui=$ui"
+            echo "audit=$audit"
+            echo "release=$release"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # Builds both web UIs once (server/Android: `dist`; desktop shell with
+  # VITE_CLIENT_TARGET=desktop: `dist-desktop`); every downstream job consumes the artifacts.
+  # The UI tests run only when the client changed.
+  ui:
+    name: Web UI
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-ui
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Build web UI
+        run: bun run --cwd apps/client build
+      - name: Build desktop UI
+        run: bun run --cwd apps/client build:desktop
+      - name: Test UI
+        if: needs.changes.outputs.client == 'true'
+        run: bun run --cwd apps/client test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-ui
+          path: apps/client/dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-ui
+          path: apps/client/dist-desktop
+          if-no-files-found: error
+
+  # Biome (client, extension, docs and the JSON/config files) and version consistency. Biome comes from
+  # the Nix devshell, pinned to the version biome.json is written for.
+  lint-web:
+    name: Lint (web)
+    needs: changes
+    if: needs.changes.outputs.lint-web == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-lint-web
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: false
+      - name: Biome
+        run: nix develop --command biome ci .
+      - name: Version consistency
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: nix develop --command bun scripts/check-version.ts
+
+  # The browser extension: type check, unit tests and the unpacked build, kept as an artifact to load in a browser.
+  extension:
+    name: Extension
+    needs: changes
+    if: needs.changes.outputs.extension == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-extension
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        working-directory: apps/extension
+        run: bun install --frozen-lockfile
+      - name: Type check
+        run: bun run --cwd apps/extension type-check
+      - name: Test
+        run: bun run --cwd apps/extension test
+      - name: Build
+        run: bun run --cwd apps/extension build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extension
+          path: apps/extension/dist
+          if-no-files-found: error
+
+  # Dependency audits. They query vulnerability databases that change on their own, so they
+  # run when dependencies change, on main, on releases and every week, never failing an unrelated PR.
+  audit:
+    name: Audit
+    needs: changes
+    if: needs.changes.outputs.audit == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-audit
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: false
+      - name: Audit JavaScript dependencies
+        run: |
+          # shellcheck disable=SC2016 # expanded by the inner shell
+          nix develop --command sh -ec '
+            for app in client website extension; do
+              (cd "apps/$app" && bun install --frozen-lockfile && bun audit --audit-level=high)
+            done
+          '
+      # govulncheck only needs the module graph and sources: the embedded UI directories just have to exist.
+      - name: govulncheck
+        run: |
+          mkdir -p apps/server/internal/ui/dist apps/desktop/dist
+          touch apps/server/internal/ui/dist/index.html apps/desktop/dist/index.html
+          nix develop --command sh -ec '
+            (cd apps/server && govulncheck -tags ocr ./...)
+            (cd apps/desktop && govulncheck ./...)
+          '
+
+  # Every Go module in one job, so the Nix devshell (Go, GTK4/WebKitGTK, Tesseract) is set up
+  # once: gofmt, go vet and tests for the modules that changed, plus the release binaries on
+  # releases and manual runs. The Go packages embed the UI, so the prebuilt artifacts are placed
+  # in the embed directories first.
+  go:
+    name: Go
+    needs: [changes, ui]
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-go
+      cancel-in-progress: ${{ !inputs.tag }}
+    env:
+      CGO_ENABLED: "1"
+      SERVER: ${{ needs.changes.outputs.server }}
+      DESKTOP: ${{ needs.changes.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      # The devshell builds Go itself when it overrides the nixpkgs version; the store cache
+      # keeps that (and the GTK/WebKit closure) between runs. Saved from main only.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ github.ref == 'refs/heads/main' }}
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('flake.lock', '**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: apps/server/internal/ui/dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-ui
+          path: apps/desktop/dist
+      - name: Prepare devshell
+        run: nix develop --command go version
+      - name: gofmt
+        run: |
+          # shellcheck disable=SC2016 # expanded by the inner shell
+          nix develop --command sh -ec '
+            unformatted="$(gofmt -l apps/server apps/desktop)"
+            if [ -n "$unformatted" ]; then
+              echo "Files need gofmt:"
+              echo "$unformatted"
+              exit 1
+            fi
+          '
+      - name: Server (vet, tests with the race detector, build without CGO)
+        if: env.SERVER == 'true'
+        run: |
+          nix develop --command sh -ec '
+            cd apps/server
+            go vet ./... && go vet -tags ocr ./...
+            go test -race -tags ocr ./...
+            CGO_ENABLED=0 go build ./...
+          '
+      - name: Desktop shell (vet, tests)
+        if: env.DESKTOP == 'true'
+        run: nix develop --command sh -ec 'cd apps/desktop && go vet ./... && go test ./...'
+      - name: Build release binaries
+        if: needs.changes.outputs.release == 'true'
+        run: |
+          nix develop --command sh -ec '
+            mkdir -p bin
+            (cd apps/server && go build -tags ocr -trimpath -ldflags="-s -w" -o ../../bin/viyu .)
+            (cd apps/desktop && go build -trimpath -ldflags="-s -w" -o ../../bin/viyu-desktop .)
+            tar -czf bin/viyu-desktop-linux-amd64.tar.gz -C bin viyu-desktop -C ../apps/desktop viyu.desktop icon.png icon.svg
+          '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.release == 'true'
+        with:
+          name: viyu-desktop-linux-amd64
+          path: bin/viyu-desktop-linux-amd64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.release == 'true'
+        with:
+          name: viyu-server-linux-amd64
+          path: bin/viyu
+          if-no-files-found: error
+
+  # Capacitor Android client of an external Viyu instance. Reuses the prebuilt
+  # UI (no second Vite build); the APK is a debug build for testing only and is
+  # signed with the throwaway Android debug key, not a release key. versionName/versionCode
+  # come from the VERSION file. Built when the Android project changes; the APK is
+  # uploaded on releases and manual runs only.
+  android:
+    name: Android (debug APK)
+    needs: [changes, ui]
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-android
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platform-tools
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: apps/client/dist
+      - name: Install dependencies
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      # `cap sync` only copies apps/client/dist and the plugins into the
+      # Android project; it does not rebuild the frontend.
+      - name: Sync Capacitor
+        run: bun run --cwd apps/client cap:sync:android
+      - name: Build debug APK
+        working-directory: apps/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.release == 'true'
+        with:
+          name: viyu-android-debug
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  # The image, with the UI injected from the prebuilt artifact. Pull requests check that it
+  # builds for amd64 without pushing; main, tags, manual runs and the weekly schedule publish
+  # it for amd64 and arm64. Publishing is gated on lint and tests (skipped jobs do not block);
+  # the weekly rebuild starts from scratch with the latest yt-dlp.
+  docker:
+    name: Docker
+    needs: [changes, ui, lint-web, go]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.docker == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-docker
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download prebuilt UI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: .ci/ui
+
+      # The Dockerfile pins an explicit yt-dlp version for reproducible builds; the weekly
+      # scheduled rebuild overrides it with the latest PyPI release.
+      - name: Resolve latest yt-dlp
+        id: ytdlp
+        if: github.event_name == 'schedule'
+        run: |
+          set -euo pipefail
+          version="$(curl -fsSL https://pypi.org/pypi/yt-dlp/json | jq -r .info.version)"
+          [[ "$version" =~ ^[0-9][0-9.]*$ ]] || { echo "Unexpected yt-dlp version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Read application version
+        id: version
+        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=semver,pattern={{major}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=sha
+          # The VERSION file is the single version source.
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          build-args: |
+            UI_BUILD=frontend-prebuilt
+            VERSION=${{ steps.version.outputs.value }}
+            ${{ steps.ytdlp.outputs.version && format('YT_DLP_VERSION={0}', steps.ytdlp.outputs.version) || '' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          # The scheduled rebuild must not reuse cached apt/pip layers.
+          no-cache: ${{ github.event_name == 'schedule' }}
+          cache-from: type=gha
+          # Pull requests read the cache main wrote but do not fill it with their own layers.
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
+
+  # Always builds the docs when relevant (PRs included) to catch breakage;
+  # only the Pages artifact upload/deploy is restricted to main and manual runs.
+  docs:
+    name: Docs build
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-${{ inputs.tag || github.ref }}-docs
+      cancel-in-progress: ${{ !inputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        working-directory: apps/website
+        run: bun install --frozen-lockfile
+
+      - name: Build docs
+        run: bun run --cwd apps/website build
+
+      - name: Setup Pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.tag
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.tag
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/website/.vitepress/dist
+
+  deploy-docs:
+    name: Deploy docs
+    needs: docs
+    # A release run reuses main's commit, which the push run deploys already.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Never cancelled by a newer CI run: an in-flight deployment must finish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

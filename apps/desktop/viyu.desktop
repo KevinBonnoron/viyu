@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Viyu
+Comment=Video subscriptions and player
+Exec=viyu-desktop
+Icon=viyu
+Terminal=false
+Categories=AudioVideo;Video;
+StartupWMClass=viyu
