@@ -1,0 +1,1271 @@
+{
+  "usersFields": [
+    {
+      "autogeneratePattern": "[a-z0-9]{15}",
+      "id": "text3208210256",
+      "max": 15,
+      "min": 15,
+      "name": "id",
+      "pattern": "^[a-z0-9]+$",
+      "primaryKey": true,
+      "required": true,
+      "system": true,
+      "type": "text"
+    },
+    {
+      "hidden": true,
+      "id": "password901924565",
+      "min": 8,
+      "name": "password",
+      "required": true,
+      "system": true,
+      "type": "password"
+    },
+    {
+      "autogeneratePattern": "[a-zA-Z0-9]{50}",
+      "hidden": true,
+      "id": "text2504183744",
+      "max": 60,
+      "min": 30,
+      "name": "tokenKey",
+      "required": true,
+      "system": true,
+      "type": "text"
+    },
+    {
+      "id": "email3885137012",
+      "name": "email",
+      "required": true,
+      "system": true,
+      "type": "email"
+    },
+    {
+      "id": "bool1547992806",
+      "name": "emailVisibility",
+      "system": true,
+      "type": "bool"
+    },
+    {
+      "id": "bool256245529",
+      "name": "verified",
+      "system": true,
+      "type": "bool"
+    },
+    {
+      "id": "text1579384326",
+      "max": 255,
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "id": "select1466534506",
+      "maxSelect": 1,
+      "name": "role",
+      "required": true,
+      "type": "select",
+      "values": ["user", "admin"]
+    },
+    {
+      "id": "file376926767",
+      "maxSelect": 1,
+      "mimeTypes": [
+        "image/jpeg",
+        "image/png",
+        "image/svg+xml",
+        "image/gif",
+        "image/webp"
+      ],
+      "name": "avatar",
+      "type": "file"
+    },
+    {
+      "name": "created",
+      "type": "autodate",
+      "onCreate": true
+    },
+    {
+      "name": "updated",
+      "type": "autodate",
+      "onCreate": true,
+      "onUpdate": true
+    }
+  ],
+  "collections": [
+    {
+      "name": "channels",
+      "id": "pbc_3009067695",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select961728715",
+          "maxSelect": 1,
+          "name": "platform",
+          "required": true,
+          "type": "select",
+          "values": ["youtube", "twitch", "peertube"]
+        },
+        {
+          "id": "text4293282159",
+          "name": "platform_id",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "text1579384326",
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "id": "text3277268710",
+          "name": "thumbnail",
+          "type": "text"
+        },
+        {
+          "id": "text1843675174",
+          "max": 20000,
+          "name": "description",
+          "type": "text"
+        },
+        {
+          "id": "number3195651717",
+          "name": "subscriber_count",
+          "type": "number"
+        },
+        {
+          "id": "date261981154",
+          "name": "expires_at",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "cascadeDelete": false,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation3601253010",
+          "maxSelect": 100000,
+          "name": "owners",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_channel ON channels (platform, platform_id)"
+      ],
+      "listRule": "@request.auth.id != '' && (owners:length = 0 || owners.id ?= @request.auth.id)",
+      "viewRule": "@request.auth.id != '' && (owners:length = 0 || owners.id ?= @request.auth.id)",
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "profiles",
+      "id": "pbc_3414089001",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "text1579384326",
+          "max": 40,
+          "min": 1,
+          "name": "name",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "text4020100030",
+          "max": 32,
+          "name": "icon",
+          "pattern": "^[a-z0-9-]*$",
+          "type": "text"
+        },
+        {
+          "id": "select4020100031",
+          "maxSelect": 1,
+          "name": "theme",
+          "type": "select",
+          "values": [
+            "teal",
+            "violet",
+            "fuchsia",
+            "rose",
+            "orange",
+            "amber",
+            "lime",
+            "emerald",
+            "cyan",
+            "sky"
+          ]
+        },
+        {
+          "id": "date4020100032",
+          "name": "notifications_seen_at",
+          "type": "date"
+        },
+        {
+          "id": "number4020100033",
+          "min": 0,
+          "name": "position",
+          "onlyInt": true,
+          "type": "number"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation2375276105",
+          "maxSelect": 1,
+          "name": "user",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_profiles_user ON profiles (user)"],
+      "listRule": "@request.auth.id = user",
+      "viewRule": "@request.auth.id = user",
+      "createRule": "@request.auth.id = user",
+      "updateRule": "@request.auth.id = user && (@request.body.user:isset = false || @request.body.user = @request.auth.id)",
+      "deleteRule": "@request.auth.id = user"
+    },
+    {
+      "name": "creators",
+      "id": "pbc_4020100090",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "text1579384326",
+          "max": 100,
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation2170006031",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_creators_profile ON creators (profile)"],
+      "listRule": "@request.auth.id = profile.user",
+      "viewRule": "@request.auth.id = profile.user",
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "videos",
+      "id": "pbc_515447164",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select961728715",
+          "maxSelect": 1,
+          "name": "platform",
+          "required": true,
+          "type": "select",
+          "values": ["youtube", "twitch", "peertube"]
+        },
+        {
+          "id": "text4293282159",
+          "name": "platform_id",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "json4020100040",
+          "name": "titles",
+          "type": "json"
+        },
+        {
+          "id": "json4020100004",
+          "name": "thumbnails",
+          "type": "json"
+        },
+        {
+          "id": "text1843675174",
+          "max": 20000,
+          "name": "description",
+          "type": "text"
+        },
+        {
+          "id": "number2254405824",
+          "name": "duration",
+          "type": "number"
+        },
+        {
+          "id": "number3891979121",
+          "name": "view_count",
+          "type": "number"
+        },
+        {
+          "id": "json1874629670",
+          "name": "tags",
+          "type": "json"
+        },
+        {
+          "id": "json2940014833",
+          "name": "creators",
+          "type": "json"
+        },
+        {
+          "id": "date4020100041",
+          "name": "published",
+          "type": "date"
+        },
+        {
+          "id": "date261981154",
+          "name": "expires_at",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "id": "json4020100042",
+          "name": "metadata",
+          "type": "json"
+        },
+        {
+          "id": "json3340845937",
+          "name": "chapters",
+          "type": "json"
+        },
+        {
+          "id": "text4020100043",
+          "max": 200,
+          "name": "category",
+          "type": "text"
+        },
+        {
+          "id": "bool4020100044",
+          "name": "live",
+          "type": "bool"
+        },
+        {
+          "id": "bool4020100045",
+          "name": "subscriber_only",
+          "type": "bool"
+        },
+        {
+          "collectionId": "pbc_3009067695",
+          "id": "relation2734263879",
+          "maxSelect": 1,
+          "name": "channel",
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": false,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation3601253010",
+          "maxSelect": 100000,
+          "name": "owners",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_video ON videos (platform_id, platform)",
+        "CREATE INDEX idx_videos_channel_published ON videos (channel, published)"
+      ],
+      "listRule": "@request.auth.id != '' && (owners:length = 0 || owners.id ?= @request.auth.id)",
+      "viewRule": "@request.auth.id != '' && (owners:length = 0 || owners.id ?= @request.auth.id)",
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "series",
+      "id": "pbc_3019457713",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "text724990059",
+          "name": "name",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "bool4020100070",
+          "name": "curated",
+          "type": "bool"
+        },
+        {
+          "collectionId": "pbc_3009067695",
+          "id": "relation4020100002",
+          "maxSelect": 1,
+          "name": "channel",
+          "required": true,
+          "type": "relation",
+          "cascadeDelete": true
+        },
+        {
+          "collectionId": "pbc_515447164",
+          "id": "relation4020100003",
+          "maxSelect": 10000,
+          "name": "videos",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_series_channel_name ON series (channel, name)"
+      ],
+      "listRule": "@request.auth.id != ''",
+      "viewRule": "@request.auth.id != ''",
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "subscriptions",
+      "id": "pbc_3980638064",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "bool4020100091",
+          "name": "ungrouped",
+          "type": "bool"
+        },
+        {
+          "id": "bool4020100093",
+          "name": "synced",
+          "type": "bool"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation2170006031",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": false,
+          "collectionId": "pbc_3009067695",
+          "id": "relation2734263879",
+          "maxSelect": 1,
+          "name": "channel",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": false,
+          "collectionId": "pbc_4020100090",
+          "id": "relation4020100092",
+          "maxSelect": 1,
+          "name": "creator",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_subscription_profile ON subscriptions (profile, channel)",
+        "CREATE INDEX idx_subscriptions_channel ON subscriptions (channel)",
+        "CREATE INDEX idx_subscriptions_profile_creator ON subscriptions (profile, creator)"
+      ],
+      "listRule": "@request.auth.id = profile.user",
+      "viewRule": "@request.auth.id = profile.user",
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": "@request.auth.id = profile.user"
+    },
+    {
+      "name": "watch_history",
+      "id": "pbc_930140841",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "date1662794098",
+          "name": "watched_at",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "id": "number64872533",
+          "name": "duration_watched",
+          "type": "number"
+        },
+        {
+          "id": "number5248971330",
+          "name": "video_duration",
+          "type": "number"
+        },
+        {
+          "id": "number1177347317",
+          "min": 0,
+          "name": "position",
+          "type": "number"
+        },
+        {
+          "id": "bool3996899263",
+          "name": "watched",
+          "type": "bool"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation2170006031",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_515447164",
+          "id": "relation4020100050",
+          "maxSelect": 1,
+          "name": "video",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": false,
+          "collectionId": "pbc_3019457713",
+          "id": "relation4020100051",
+          "maxSelect": 1,
+          "name": "series",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_watch_history_profile_video ON watch_history (profile, video)",
+        "CREATE INDEX idx_watch_history_profile_watched_at ON watch_history (profile, watched_at)",
+        "CREATE INDEX idx_watch_history_profile_watched ON watch_history (profile, watched)"
+      ],
+      "listRule": "@request.auth.id = profile.user",
+      "viewRule": "@request.auth.id = profile.user",
+      "createRule": "@request.auth.id = profile.user",
+      "updateRule": "@request.auth.id = profile.user && @request.body.profile:changed = false && @request.body.video:changed = false",
+      "deleteRule": "@request.auth.id = profile.user"
+    },
+    {
+      "name": "settings",
+      "id": "pbc_2769025244",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "bool1927318270",
+          "name": "hide_shorts",
+          "type": "bool"
+        },
+        {
+          "id": "bool1001445761",
+          "name": "use_original_titles",
+          "type": "bool"
+        },
+        {
+          "id": "select3299353113",
+          "maxSelect": 1,
+          "name": "playback_quality",
+          "type": "select",
+          "values": [
+            "auto",
+            "144",
+            "240",
+            "360",
+            "480",
+            "720",
+            "1080",
+            "1440",
+            "2160",
+            "4320"
+          ]
+        },
+        {
+          "id": "bool1110467616",
+          "name": "auto_skip_sponsors",
+          "type": "bool"
+        },
+        {
+          "id": "bool2684467841",
+          "name": "autoplay",
+          "type": "bool"
+        },
+        {
+          "id": "bool3889920300",
+          "name": "hide_watched",
+          "type": "bool"
+        },
+        {
+          "id": "bool4020100060",
+          "name": "hide_subscriber_only",
+          "type": "bool"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation2375276105",
+          "maxSelect": 1,
+          "name": "user",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_settings_user ON settings (user)"
+      ],
+      "listRule": "@request.auth.id = user",
+      "viewRule": "@request.auth.id = user",
+      "createRule": "@request.auth.id = user",
+      "updateRule": "@request.auth.id = user && (@request.body.user:isset = false || @request.body.user = @request.auth.id)",
+      "deleteRule": "@request.auth.id = user"
+    },
+    {
+      "name": "source_connections",
+      "id": "pbc_3919855711",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select961728715",
+          "maxSelect": 1,
+          "name": "platform",
+          "required": true,
+          "type": "select",
+          "values": ["youtube", "twitch", "peertube"]
+        },
+        {
+          "id": "text245846248",
+          "max": 120,
+          "name": "label",
+          "type": "text"
+        },
+        {
+          "hidden": true,
+          "id": "text3230365148",
+          "max": 400000,
+          "name": "encrypted_cookies",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation2375276105",
+          "maxSelect": 1,
+          "name": "user",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_source_connection_user_platform ON source_connections (user, platform)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "channel_catalogs",
+      "id": "pbc_2591226406",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select961728715",
+          "maxSelect": 1,
+          "name": "platform",
+          "required": true,
+          "type": "select",
+          "values": ["youtube", "twitch", "peertube"]
+        },
+        {
+          "id": "text4293282159",
+          "name": "platform_id",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "select2063623452",
+          "maxSelect": 1,
+          "name": "status",
+          "required": true,
+          "type": "select",
+          "values": ["pending", "running", "complete", "error"]
+        },
+        {
+          "id": "date1410257210",
+          "name": "completed_at",
+          "type": "date"
+        },
+        {
+          "hidden": true,
+          "id": "text3476367252",
+          "name": "task_generation",
+          "type": "text"
+        },
+        {
+          "hidden": true,
+          "id": "json4020100071",
+          "name": "collections",
+          "type": "json"
+        },
+        {
+          "collectionId": "pbc_3009067695",
+          "id": "relation2734263879",
+          "maxSelect": 1,
+          "name": "channel",
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_channel_catalog ON channel_catalogs (platform_id, platform)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "channel_catalog_entries",
+      "id": "pbc_3400155242",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "text3542510651",
+          "name": "generation",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_2591226406",
+          "id": "relation455881287",
+          "maxSelect": 1,
+          "name": "catalog",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "video",
+          "type": "relation",
+          "required": true,
+          "collectionId": "pbc_515447164",
+          "maxSelect": 1,
+          "cascadeDelete": true
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_channel_catalog_video ON channel_catalog_entries (catalog, video)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "video_reactions",
+      "id": "pbc_3019457712",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select2765555703",
+          "maxSelect": 1,
+          "name": "reaction",
+          "required": true,
+          "type": "select",
+          "values": ["like", "dislike", "not_interested"]
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation2170006031",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "collectionId": "pbc_515447164",
+          "id": "relation4020100001",
+          "maxSelect": 1,
+          "name": "video",
+          "required": true,
+          "type": "relation",
+          "cascadeDelete": true
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_unique_video_reaction_profile ON video_reactions (profile, video)",
+        "CREATE INDEX idx_video_reactions_video ON video_reactions (video)"
+      ],
+      "listRule": "@request.auth.id = profile.user",
+      "viewRule": "@request.auth.id = profile.user",
+      "createRule": "@request.auth.id = profile.user && @collection.profiles.id ?= @request.body.profile && @collection.profiles.user ?= @request.auth.id",
+      "updateRule": "@request.auth.id = profile.user && (@request.body.profile:isset = false || (@collection.profiles.id ?= @request.body.profile && @collection.profiles.user ?= @request.auth.id))",
+      "deleteRule": "@request.auth.id = profile.user"
+    },
+    {
+      "name": "notification_seen",
+      "id": "pbc_4020100070",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "date4020100071",
+          "name": "seen_at",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation4020100072",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3009067695",
+          "id": "relation4020100073",
+          "maxSelect": 1,
+          "name": "channel",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_notification_seen_profile_channel ON notification_seen (profile, channel)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "source_activations",
+      "id": "pbc_4020100080",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "select961728715",
+          "maxSelect": 1,
+          "name": "platform",
+          "required": true,
+          "type": "select",
+          "values": ["youtube", "twitch", "peertube"]
+        },
+        {
+          "id": "bool4020100082",
+          "name": "enabled",
+          "type": "bool"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation4020100083",
+          "maxSelect": 1,
+          "name": "user",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_source_activation_user_platform ON source_activations (user, platform)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "name": "companion_devices",
+      "id": "pbc_4020100100",
+      "type": "base",
+      "fields": [
+        {
+          "autogeneratePattern": "[a-z0-9]{15}",
+          "id": "text3208210256",
+          "max": 15,
+          "min": 15,
+          "name": "id",
+          "pattern": "^[a-z0-9]+$",
+          "primaryKey": true,
+          "required": true,
+          "system": true,
+          "type": "text"
+        },
+        {
+          "id": "text4020100101",
+          "max": 80,
+          "name": "name",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "hidden": true,
+          "id": "text4020100102",
+          "max": 64,
+          "name": "token_hash",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "id": "date4020100103",
+          "name": "last_sync_at",
+          "type": "date"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "_pb_users_auth_",
+          "id": "relation4020100104",
+          "maxSelect": 1,
+          "name": "user",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "cascadeDelete": true,
+          "collectionId": "pbc_3414089001",
+          "id": "relation4020100105",
+          "maxSelect": 1,
+          "name": "profile",
+          "required": true,
+          "type": "relation"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "onCreate": true
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "onCreate": true,
+          "onUpdate": true
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_companion_device_token ON companion_devices (token_hash)",
+        "CREATE INDEX idx_companion_devices_user ON companion_devices (user)"
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    }
+  ]
+}

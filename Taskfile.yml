@@ -1,0 +1,132 @@
+version: "3"
+
+env:
+  CGO_ENABLED: "1"
+
+# Tasks are named <target>:<action> (server, client, desktop, docs, docker); the aggregates
+# (install, dev, test, lint, format, audit, type-check) act on every target.
+tasks:
+  default:
+    cmds: [task --list]
+
+  install:
+    desc: Install each JavaScript app's dependencies and the Go modules
+    cmds:
+      - (cd apps/client && bun install)
+      - (cd apps/website && bun install)
+      - (cd apps/server && go mod download)
+      - (cd apps/desktop && go mod download)
+
+  dev:
+    desc: Run the Go backend and Vite frontend
+    deps: [server:dev, client:dev]
+
+  server:dev:
+    desc: Run Go + PocketBase on 127.0.0.1:8090, restarting on changes
+    cmds:
+      - watchexec -r -e go --watch apps/server -- go -C apps/server run . serve --http=127.0.0.1:8090 --dir=../../db/pb_data
+
+  client:dev:
+    desc: Run the Vite dev server
+    cmds: [bun run --cwd apps/client dev]
+
+  client:build:
+    desc: Build the web UI into the server's embed directory
+    cmds:
+      - bun run --cwd apps/client build
+      - mkdir -p apps/server/internal/ui/dist
+      - rm -rf apps/server/internal/ui/dist/*
+      - cp -R apps/client/dist/. apps/server/internal/ui/dist/
+
+  server:build:
+    desc: "Build bin/viyu with the embedded UI and thumbnail OCR (-tags ocr: native Tesseract libraries required)"
+    deps: [client:build]
+    cmds:
+      - mkdir -p bin
+      - cd apps/server && go build -tags ocr -trimpath -ldflags='-s -w' -o ../../bin/viyu .
+
+  # The desktop shell's UI (VITE_CLIENT_TARGET=desktop shows the server-setup screen), embedded by apps/desktop.
+  desktop:ui:
+    internal: true
+    cmds:
+      - bun run --cwd apps/client build:desktop
+      - mkdir -p apps/desktop/dist
+      - rm -rf apps/desktop/dist/*
+      - cp -R apps/client/dist-desktop/. apps/desktop/dist/
+
+  desktop:build:
+    desc: Build the Wails 3 desktop application with its UI (Linux GTK4 / WebKitGTK 6.0)
+    deps: [desktop:ui]
+    cmds:
+      - mkdir -p bin
+      - cd apps/desktop && go build -trimpath -ldflags='-s -w' -o ../../bin/viyu-desktop .
+
+  desktop:run:
+    desc: Build and launch the desktop application
+    deps: [desktop:build]
+    cmds: [./bin/viyu-desktop]
+
+  desktop:package:
+    desc: Package the Linux desktop binary and launcher (native UI/OCR libraries, eng data and yt-dlp required)
+    deps: [desktop:build]
+    cmds:
+      - tar -czf bin/viyu-desktop-linux-{{ARCH}}.tar.gz -C bin viyu-desktop -C ../apps/desktop viyu.desktop icon.png icon.svg
+
+  docs:dev:
+    desc: Serve the user guide with hot reload
+    cmds: [bun run --cwd apps/website dev]
+
+  docs:build:
+    desc: Build the user guide
+    cmds: [bun run --cwd apps/website build]
+
+  docker:build:
+    desc: Build the Docker image locally
+    cmds:
+      - docker build -f docker/Dockerfile --build-arg VERSION="$(cat VERSION)" -t ghcr.io/kevinbonnoron/viyu:latest .
+
+  version:check:
+    desc: Check that VERSION is MAJOR.MINOR.PATCH (and matches the tag on release builds)
+    cmds: [bun scripts/check-version.ts]
+
+  type-check:
+    desc: Type-check the client
+    cmds:
+      - bun run --cwd apps/client type-check
+
+  # The Go packages embed the UI, so both UI builds must exist; they run sequentially
+  # because they share the client's incremental TypeScript build state.
+  test:
+    desc: Run every test suite
+    cmds:
+      - task: client:build
+      - task: desktop:ui
+      - cd apps/server && go test -race -tags ocr ./...
+      - cd apps/server && CGO_ENABLED=0 go build ./...
+      - cd apps/desktop && go test ./...
+      - bun run --cwd apps/client test
+
+  lint:
+    desc: Biome, version check, gofmt and go vet
+    cmds:
+      - task: client:build
+      - task: desktop:ui
+      - task: version:check
+      - biome check .
+      - test -z "$(gofmt -l apps/server apps/desktop)"
+      - cd apps/server && go vet ./... && go vet -tags ocr ./...
+      - cd apps/desktop && go vet ./...
+
+  audit:
+    desc: Scan Go modules (govulncheck) and JavaScript dependencies (bun audit) for known vulnerabilities
+    cmds:
+      - cd apps/server && govulncheck -tags ocr ./...
+      - cd apps/desktop && govulncheck ./...
+      - cd apps/client && bun audit
+      - cd apps/website && bun audit
+
+  format:
+    desc: Format JavaScript, JSON, CSS and Go sources
+    cmds:
+      - biome format . --write
+      - gofmt -w apps/server apps/desktop
