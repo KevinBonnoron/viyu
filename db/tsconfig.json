@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "types": ["bun"]
+  },
+  "include": [
+    "pocketbase/**/*.ts",
+    "src/collections.ts",
+    "scripts/migration.ts",
+    "scripts/client.ts"
+  ]
+}

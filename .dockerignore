@@ -1,0 +1,39 @@
+# Dependencies (reinstalled in Docker)
+node_modules
+**/node_modules
+
+# Build outputs
+**/build
+**/dist-ssr
+
+# Git
+.git
+.gitignore
+
+# IDE / editor
+.vscode
+.idea
+*.sw?
+*.suo
+
+# CI / tooling
+.github
+.claude
+.turbo
+.tanstack
+
+# PocketBase data (runtime only)
+db/pb_data
+
+# Docker (avoid recursive context)
+docker/Dockerfile
+
+# Misc
+*.log
+.DS_Store
+.env*
+coverage
+README.md
+LICENSE
+lefthook.yml
+biome.json

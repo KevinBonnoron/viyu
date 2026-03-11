@@ -1,0 +1,39 @@
+{
+  "name": "template",
+  "version": "0.4.0",
+  "description": "A monorepo template built with Bun, Hono, Vite, and React",
+  "author": "Kevin Bonnoron",
+  "license": "MIT",
+  "homepage": "https://github.com/KevinBonnoron/template",
+  "packageManager": "bun@1.2.22",
+  "workspaces": [
+    "./client",
+    "./db",
+    "./docs",
+    "./server",
+    "./shared"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "test": "turbo test",
+    "format": "biome format . --write"
+  },
+  "keywords": [
+    "bun",
+    "hono",
+    "react",
+    "vite",
+    "monorepo"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "bun-types": "latest",
+    "turbo": "^2"
+  },
+  "peerDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
