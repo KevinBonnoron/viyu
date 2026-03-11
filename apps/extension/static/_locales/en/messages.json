@@ -1,0 +1,41 @@
+{
+  "extensionName": { "message": "Viyu YouTube companion" },
+  "extensionDescription": {
+    "message": "Syncs the subscriptions and watch history of the YouTube account signed in in this browser into a Viyu profile. Your YouTube cookies stay in the browser."
+  },
+  "pairHelp": {
+    "message": "In Viyu, open Sources, then “Pair an extension” on the YouTube card, and paste the pairing code here."
+  },
+  "pairLabel": { "message": "Pairing code" },
+  "pairButton": { "message": "Pair" },
+  "profileLabel": { "message": "Profile" },
+  "serverLabel": { "message": "Server" },
+  "lastSyncLabel": { "message": "Last sync" },
+  "neverSynced": { "message": "Never" },
+  "syncing": { "message": "Syncing…" },
+  "syncButton": { "message": "Sync now" },
+  "unpairButton": { "message": "Unpair" },
+  "unpairConfirm": {
+    "message": "Unpair this extension from Viyu? What was already synced stays in Viyu."
+  },
+  "syncSummary": {
+    "message": "$1 subscriptions on YouTube: $2 added, $3 removed. History: $4 added, $5 updated."
+  },
+  "privacyNote": {
+    "message": "Viyu receives channel and video identifiers only. Sync runs while YouTube is open in this browser, at most every 6 hours, or when you ask."
+  },
+  "errorSignedOut": {
+    "message": "Sign in to YouTube in this browser, then sync again."
+  },
+  "errorYoutubeUnavailable": {
+    "message": "YouTube could not be read. Try again in a moment."
+  },
+  "errorViyuUnreachable": { "message": "Viyu could not be reached." },
+  "errorViyuRefused": { "message": "Viyu refused the sync:" },
+  "errorUnpaired": {
+    "message": "This extension is no longer paired with Viyu. Pair it again."
+  },
+  "errorPairingInvalid": {
+    "message": "This pairing code is invalid or has expired. Create a new one in Viyu."
+  }
+}

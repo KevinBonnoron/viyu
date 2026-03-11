@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icon.png" alt="" width="24" height="24" />
+      <h1 data-i18n="extensionName">Viyu YouTube companion</h1>
+    </header>
+
+    <p id="notice" class="notice" hidden></p>
+
+    <section id="unpaired" hidden>
+      <p data-i18n="pairHelp"></p>
+      <form id="pair-form">
+        <label for="pairing" data-i18n="pairLabel">Pairing code</label>
+        <textarea id="pairing" rows="4" spellcheck="false" autocomplete="off" required></textarea>
+        <button type="submit" data-i18n="pairButton"></button>
+      </form>
+    </section>
+
+    <section id="paired" hidden>
+      <dl>
+        <dt data-i18n="profileLabel"></dt>
+        <dd id="profile"></dd>
+        <dt data-i18n="serverLabel"></dt>
+        <dd id="server"></dd>
+        <dt data-i18n="lastSyncLabel"></dt>
+        <dd id="last-sync"></dd>
+      </dl>
+      <p id="summary" class="muted" hidden></p>
+      <div class="actions">
+        <button id="sync" type="button" data-i18n="syncButton"></button>
+        <button id="unpair" type="button" class="secondary" data-i18n="unpairButton"></button>
+      </div>
+      <p class="muted" data-i18n="privacyNote"></p>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
