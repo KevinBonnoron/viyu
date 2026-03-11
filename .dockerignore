@@ -1,6 +1,19 @@
 # Dependencies (reinstalled in Docker)
 node_modules
 **/node_modules
+.direnv
+.singularity-worktrees
+bin
+apps/desktop
+apps/android
+# Only the workspace manifest is needed so `bun install --frozen-lockfile` resolves the lockfile.
+apps/website/*
+!apps/website/package.json
+docs
+tools
+apps/client/dist-desktop
+apps/client/dist
+apps/server/internal/ui/dist
 
 # Build outputs
 **/build
@@ -19,11 +32,10 @@ node_modules
 # CI / tooling
 .github
 .claude
-.turbo
 .tanstack
 
 # PocketBase data (runtime only)
-db/pb_data
+db
 
 # Docker (avoid recursive context)
 docker/Dockerfile
@@ -34,6 +46,5 @@ docker/Dockerfile
 .env*
 coverage
 README.md
-LICENSE
 lefthook.yml
 biome.json

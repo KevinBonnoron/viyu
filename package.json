@@ -1,39 +1,35 @@
 {
-  "name": "template",
+  "name": "viyu",
   "version": "0.4.0",
-  "description": "A monorepo template built with Bun, Hono, Vite, and React",
+  "description": "Video subscriptions and player built with Go, PocketBase, React and Wails 3",
   "author": "Kevin Bonnoron",
   "license": "MIT",
-  "homepage": "https://github.com/KevinBonnoron/template",
-  "packageManager": "bun@1.2.22",
+  "packageManager": "bun@1.3.10",
   "workspaces": [
-    "./client",
-    "./db",
-    "./docs",
-    "./server",
-    "./shared"
+    "./apps/client",
+    "./apps/website"
   ],
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "lint": "turbo lint",
-    "type-check": "turbo type-check",
-    "test": "turbo test",
-    "format": "biome format . --write"
+    "dev": "task dev",
+    "desktop": "task desktop:run",
+    "build": "task build",
+    "build:desktop": "task desktop:build",
+    "lint": "task lint",
+    "type-check": "task type-check",
+    "test": "task test",
+    "format": "task format"
   },
   "keywords": [
-    "bun",
-    "hono",
+    "go",
+    "pocketbase",
+    "wails",
     "react",
-    "vite",
-    "monorepo"
+    "vite"
   ],
   "devDependencies": {
-    "@biomejs/biome": "^2.4.6",
-    "bun-types": "latest",
-    "turbo": "^2"
+    "@biomejs/biome": "^2.6.6"
   },
   "peerDependencies": {
-    "typescript": "^5.7.3"
+    "typescript": "^7.0.2"
   }
 }

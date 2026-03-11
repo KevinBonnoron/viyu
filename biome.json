@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -8,8 +8,9 @@
   "files": {
     "includes": [
       "**",
-      "!client/src/routeTree.gen.ts",
-      "!!client/src/components/ui"
+      "!.turbo",
+      "!apps/client/src/routeTree.gen.ts",
+      "!!apps/client/src/components/ui"
     ]
   },
   "formatter": {
@@ -19,7 +20,13 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
+      "correctness": {
+        "useExhaustiveDependencies": {
+          "level": "error",
+          "options": { "reportUnnecessaryDependencies": false }
+        }
+      },
       "style": {
         "useImportType": "error",
         "useConsistentMemberAccessibility": {
@@ -39,7 +46,7 @@
         "organizeImports": {
           "level": "on",
           "options": {
-            "groups": [":NODE:", ":PACKAGE:", ":ALIAS:", ":RELATIVE:"]
+            "groups": [":NODE:", ":PACKAGE:", ":ALIAS:", ":PATH:"]
           }
         }
       }
@@ -54,7 +61,7 @@
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
-      "lineWidth": 320
+      "lineWidth": 160
     }
   }
 }

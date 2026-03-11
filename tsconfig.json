@@ -6,15 +6,6 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "jsx": "react-jsx",
-    "allowJs": true,
-
-    // Path resolution
-    "baseUrl": "./",
-    "paths": {
-      "@server/*": ["./server/src/*"],
-      "@client/*": ["./client/src/*"],
-      "@shared/*": ["./shared/src/*"]
-    },
 
     // Module resolution
     "moduleResolution": "bundler",
@@ -27,7 +18,6 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
-    "experimentalDecorators": true,
 
     // Output control
     "skipLibCheck": true,

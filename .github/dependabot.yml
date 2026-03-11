@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /apps/server
+    schedule: { interval: weekly }
+    groups:
+      go-server: { patterns: ["*"], update-types: [minor, patch] }
+
+  - package-ecosystem: gomod
+    directory: /apps/desktop
+    schedule: { interval: weekly }
+    groups:
+      go-desktop: { patterns: ["*"], update-types: [minor, patch] }
+
+  - package-ecosystem: gomod
+    directory: /tools/youtube-cookie-helper
+    schedule: { interval: weekly }
+    groups:
+      go-cookie-helper: { patterns: ["*"], update-types: [minor, patch] }
+
+  - package-ecosystem: bun
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      npm: { patterns: ["*"], update-types: [minor, patch] }
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule: { interval: weekly }
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule: { interval: weekly }
+    groups:
+      gradle: { patterns: ["*"], update-types: [minor, patch] }

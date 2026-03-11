@@ -1,59 +1,69 @@
 # syntax=docker/dockerfile:1
+# UI_BUILD selects the UI source: `frontend` builds it here, `frontend-prebuilt` reuses a CI artifact in .ci/ui.
+ARG UI_BUILD=frontend
+# Release version recorded in the image labels (CI passes the root package.json version).
+ARG VERSION=dev
+# Explicit yt-dlp release. The weekly scheduled CI build overrides it with the latest PyPI release
+# so a rebuilt image picks up YouTube extractor fixes; local builds stay reproducible.
+ARG YT_DLP_VERSION=2026.10.26
 
-# ── PocketBase binary (per target platform) ──────────────────────────────────
+# Base images are pinned by tag AND digest (dependabot's docker ecosystem bumps both).
+FROM oven/bun:1.3.10@sha256:b86c67b531d87b4db11470d9b2bd0c519b1976eee6fcd71634e73abfa6230d2e AS frontend
+WORKDIR /src
+COPY package.json bun.lock tsconfig.json LICENSE ./
+COPY apps/client/package.json ./apps/client/package.json
+COPY apps/website/package.json ./apps/website/package.json
+RUN bun install --frozen-lockfile
+COPY apps/client ./apps/client
+RUN bun run --cwd apps/client build && mkdir -p /src/client && cp -R apps/client/dist /src/client/dist
 
-FROM alpine:latest AS binary-downloader
+FROM scratch AS frontend-prebuilt
+COPY .ci/ui/ /src/client/dist/
 
-ARG POCKETBASE_VERSION=0.36.6
-ARG TARGETARCH
+FROM ${UI_BUILD} AS ui
 
-WORKDIR /tmp
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS backend
+WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libc6-dev pkg-config libtesseract-dev libleptonica-dev \
+    && rm -rf /var/lib/apt/lists/*
+ENV CGO_ENABLED=1
+WORKDIR /src/apps/server
+COPY apps/server/go.mod apps/server/go.sum ./
+RUN go mod download
+COPY apps/server ./
+COPY --from=ui /src/client/dist ./internal/ui/dist
+# -tags ocr compiles the Tesseract thumbnail OCR in (CGO); the runtime stage ships its libraries.
+RUN go build -tags ocr -trimpath -ldflags='-s -w' -o /viyu .
 
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add curl unzip \
-    && ARCH=$(case "$TARGETARCH" in \
-        arm64) echo "linux_arm64" ;; \
-        amd64) echo "linux_amd64" ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" >&2 && exit 1 ;; \
-    esac) \
-    && curl -fsSL "https://github.com/pocketbase/pocketbase/releases/download/v${POCKETBASE_VERSION}/pocketbase_${POCKETBASE_VERSION}_${ARCH}.zip" -o pocketbase.zip \
-    && unzip -q pocketbase.zip \
-    && chmod +x pocketbase \
-    && rm pocketbase.zip
+FROM denoland/deno:bin-2.9.8@sha256:b507583d3c68ba69f3ed2ce5969ae5b8b70f43421c781279c7aea06435263543 AS deno
 
-# ── Bun binary (per target platform) ─────────────────────────────────────────
-
-FROM oven/bun:1.2.4 AS bun-bin
-
-# ── Final image ──────────────────────────────────────────────────────────────
-
-FROM nginx:bookworm AS final
-
-COPY --from=bun-bin /usr/local/bin/bun /usr/local/bin/bun
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends supervisor \
-    && mkdir -p /var/log/supervisor /app/db/pb_data /app/skills /app/output
-
-WORKDIR /app
-
-COPY server/dist/index.js ./server/dist/index.js
-COPY client/dist /usr/share/nginx/html
-COPY db/pb_hooks ./db/pb_hooks
-COPY db/pb_migrations ./db/pb_migrations
-
-COPY --from=binary-downloader /tmp/pocketbase /usr/local/bin/pocketbase
-
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-EXPOSE 80
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72
+ARG VERSION
+ARG YT_DLP_VERSION
+LABEL org.opencontainers.image.title="Viyu" \
+      org.opencontainers.image.source="https://github.com/KevinBonnoron/viyu" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.viyu.yt-dlp.version="${YT_DLP_VERSION}"
+# tini runs as PID 1 so the yt-dlp/ffmpeg child processes spawned by the server are reaped.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates ffmpeg tini libtesseract5 liblept5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}" \
+    && groupadd --gid 1000 viyu \
+    && useradd --create-home --uid 1000 --gid viyu viyu \
+    && mkdir -p /app/pb_data /usr/share/tesseract-ocr/5/tessdata && chown viyu:viyu /app/pb_data
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+# Debian's tesseract-ocr-eng contains only LSTM data; thumbnail OCR uses the legacy engine.
+ADD --chmod=0644 --checksum=sha256:daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047 https://raw.githubusercontent.com/tesseract-ocr/tessdata/ced78752cc61322fb554c280d13360b35b8684e4/eng.traineddata /usr/share/tesseract-ocr/5/tessdata/eng.traineddata
+COPY --from=backend /viyu /usr/local/bin/viyu
+COPY --from=deno /deno /usr/local/bin/deno
+USER 1000:1000
+VOLUME /app/pb_data
+EXPOSE 8090
+# The probe is the server binary itself: no interpreter dependency, loopback never goes through
+# HTTP(S)_PROXY. Set VIYU_HEALTHCHECK_URL when overriding --http.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/viyu", "healthcheck"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/viyu"]
+CMD ["serve", "--http=0.0.0.0:8090", "--dir=/app/pb_data"]

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Viyu</string>
+    <string name="title_activity_main">Viyu</string>
+    <string name="package_name">com.viyu.app</string>
+    <string name="custom_url_scheme">com.viyu.app</string>
+</resources>
