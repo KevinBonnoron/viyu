@@ -1,0 +1,37 @@
+name: Release PR
+
+# The only workflow a push to main runs. release-please keeps a release pull request open from the
+# Conventional Commits on main: it bumps VERSION and writes CHANGELOG.md. Merging that pull request makes the
+# next run create the tag and the GitHub release, then start release.yml on that tag: a tag pushed with the
+# workflow's own token triggers no workflow by itself, a workflow_dispatch does.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Start the release build
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

@@ -1,0 +1,416 @@
+name: Release
+
+# Builds and publishes a release from its tag: the Docker image for amd64 and arm64 (each on a native
+# runner), the server and desktop binaries and the Android APK attached to the GitHub release, and the docs.
+# The code was checked by the CI of its pull requests, so nothing is tested again. release-please.yml starts
+# it on the tag it creates (a tag pushed with the workflow's token triggers no workflow by itself); a tag
+# pushed by hand starts it too.
+#
+# Every Monday (or when started by hand on main) it refreshes instead: it rebuilds the image of the latest
+# release from scratch with the latest yt-dlp (YouTube extractors break often) and Debian updates and
+# republishes it under the same tags, audits that release's dependencies, and saves on main the caches the
+# pull requests read (a pull request can only read caches of its own branch or of main).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+# One run per tag, or per refresh; never cancelled: a half-published release is worse than a slow one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  BUN_VERSION: "1.4.4"
+
+jobs:
+  # What the run builds: the tag it was started on (a release), else the latest release (a refresh, which
+  # has nothing to build before the first release). A tag pushed by hand gets its GitHub release here.
+  target:
+    name: Target
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      release: ${{ steps.resolve.outputs.release }}
+      latest: ${{ steps.resolve.outputs.latest }}
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Resolve the tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == tag ]]; then
+            tag="$REF_NAME" release=true
+          else
+            tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)" release=false
+          fi
+          version="" latest=false
+          if [[ -z "$tag" ]]; then
+            echo "No release yet: nothing to refresh."
+          else
+            version="$(git show "$tag:VERSION" | tr -d '[:space:]')"
+            if [[ "$tag" != "v$version" ]]; then
+              echo "Tag $tag does not match VERSION $version."
+              exit 1
+            fi
+            if [[ "$release" == true ]] && ! gh release view "$tag" >/dev/null 2>&1; then
+              gh release create "$tag" --verify-tag --generate-notes --title "$tag"
+            fi
+            # `latest` follows the latest release: rebuilding an older tag does not move it back.
+            if [[ "$(gh release view --json tagName --jq .tagName)" == "$tag" ]]; then latest=true; fi
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "release=$release"
+            echo "latest=$latest"
+            echo "image=$REGISTRY/${GITHUB_REPOSITORY,,}"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # Builds the web UI once for every artifact that embeds it, and the desktop UI for a release.
+  ui:
+    name: Web UI
+    needs: target
+    if: needs.target.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Build web UI
+        run: bun run --cwd apps/client build
+      - name: Build desktop UI
+        if: needs.target.outputs.release == 'true'
+        run: bun run --cwd apps/client build:desktop
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-ui
+          path: apps/client/dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.target.outputs.release == 'true'
+        with:
+          name: desktop-ui
+          path: apps/client/dist-desktop
+          if-no-files-found: error
+
+  # One image per architecture, each on its own native runner, pushed by digest; `image` then tags them
+  # together. A refresh starts from scratch with the latest yt-dlp.
+  docker:
+    name: Docker (${{ matrix.arch }})
+    needs: [target, ui]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: .ci/ui
+      - name: Resolve latest yt-dlp
+        id: ytdlp
+        if: needs.target.outputs.release != 'true'
+        run: |
+          set -euo pipefail
+          version="$(curl -fsSL https://pypi.org/pypi/yt-dlp/json | jq -r .info.version)"
+          [[ "$version" =~ ^[0-9][0-9.]*$ ]] || { echo "Unexpected yt-dlp version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          build-args: |
+            UI_BUILD=frontend-prebuilt
+            VERSION=${{ needs.target.outputs.version }}
+            ${{ steps.ytdlp.outputs.version && format('YT_DLP_VERSION={0}', steps.ytdlp.outputs.version) || '' }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ needs.target.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          no-cache: ${{ needs.target.outputs.release != 'true' }}
+          cache-from: type=gha,scope=linux-${{ matrix.arch }}
+          # Only a refresh, which runs on main, writes the cache: pull requests cannot read one written on a tag.
+          cache-to: ${{ github.ref_type != 'tag' && format('type=gha,mode=max,scope=linux-{0}', matrix.arch) || '' }}
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Tags both architectures as one image: X.Y.Z and X.Y, X from 1.0 on, and latest for the latest release.
+  image:
+    name: Docker image
+    needs: [target, docker]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the image
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ needs.target.outputs.image }}
+          VERSION: ${{ needs.target.outputs.version }}
+          LATEST: ${{ needs.target.outputs.latest }}
+        run: |
+          set -euo pipefail
+          IFS=. read -r major minor _ <<< "$VERSION"
+          tags=(-t "$IMAGE:$VERSION" -t "$IMAGE:$major.$minor")
+          # Before 1.0 a minor version may break: a bare major tag would promise what 0.x does not.
+          if [[ "$major" != 0 ]]; then tags+=(-t "$IMAGE:$major"); fi
+          if [[ "$LATEST" == true ]]; then tags+=(-t "$IMAGE:latest"); fi
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+  # The Linux server and desktop binaries, attached to the GitHub release. Built in the Nix shell, they keep
+  # Nix runtime references (see the README).
+  binaries:
+    name: Binaries
+    needs: [target, ui]
+    if: needs.target.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('flake.lock', '**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: apps/server/internal/ui/dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-ui
+          path: apps/desktop/dist
+      - name: Build the binaries
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          nix develop --command sh -ec '
+            mkdir -p bin
+            (cd apps/server && go build -tags ocr -trimpath -ldflags="-s -w" -o ../../bin/viyu-server-linux-amd64 .)
+            (cd apps/desktop && go build -trimpath -ldflags="-s -w" -o ../../bin/viyu-desktop .)
+            tar -czf bin/viyu-desktop-linux-amd64.tar.gz -C bin viyu-desktop -C ../apps/desktop viyu.desktop icon.png icon.svg
+          '
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.target.outputs.tag }}
+        run: gh release upload "$TAG" bin/viyu-server-linux-amd64 bin/viyu-desktop-linux-amd64.tar.gz --clobber
+
+  # The debug-signed Android APK (versionName/versionCode from VERSION), attached to the GitHub release.
+  android:
+    name: Android APK
+    needs: [target, ui]
+    if: needs.target.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platform-tools
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-ui
+          path: apps/client/dist
+      - name: Install dependencies
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Sync Capacitor
+        run: bun run --cwd apps/client cap:sync:android
+      - name: Build debug APK
+        working-directory: apps/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.target.outputs.tag }}
+          VERSION: ${{ needs.target.outputs.version }}
+        run: |
+          apk="viyu-$VERSION-android-debug.apk"
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          gh release upload "$TAG" "$apk" --clobber
+
+  # The user guide of the release, on GitHub Pages.
+  docs:
+    name: Docs build
+    needs: target
+    if: needs.target.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        working-directory: apps/website
+        run: bun install --frozen-lockfile
+      - name: Build docs
+        run: bun run --cwd apps/website build
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/website/.vitepress/dist
+
+  deploy-docs:
+    name: Deploy docs
+    needs: docs
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    # Never cancelled: an in-flight deployment must finish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # A refresh audits the dependencies of the latest release: vulnerability databases change on their own.
+  audit:
+    name: Audit
+    needs: target
+    if: needs.target.outputs.tag != '' && needs.target.outputs.release != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.tag }}
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: false
+      - name: Audit dependencies
+        run: nix develop --command ./scripts/audit.sh
+
+  # A refresh saves on main the Nix store (Go, GTK/WebKit, Tesseract) and the Go caches the pull requests
+  # restore; caches saved on a pull request or a tag are invisible to the others.
+  caches:
+    name: Caches
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('flake.lock', '**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - name: Fill the Go caches
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          for dist in apps/server/internal/ui/dist apps/desktop/dist; do
+            mkdir -p "$dist" && touch "$dist/index.html"
+          done
+          nix develop --command sh -ec '
+            (cd apps/server && go build -tags ocr ./... && go test -race -tags ocr -run "^$" ./...)
+            (cd apps/desktop && go build ./...)
+          '
