@@ -1,0 +1,47 @@
+name: Release
+
+# release-please keeps a release pull request open from the Conventional Commits on main: it bumps VERSION
+# and writes CHANGELOG.md. Merging it tags the commit and creates the GitHub release, then this workflow
+# runs the CI in release mode on that tag: a tag created with the workflow's own token would trigger no
+# other workflow by itself.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # The called workflow's jobs can only use the permissions granted here.
+  ci:
+    name: Release CI
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    permissions:
+      contents: read
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
