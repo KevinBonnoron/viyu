@@ -1,0 +1,122 @@
+version: "3"
+
+env:
+  CGO_ENABLED: "1"
+
+tasks:
+  default:
+    cmds: [task --list]
+
+  install:
+    desc: Install frontend dependencies and Go modules
+    cmds:
+      - bun install
+      - (cd apps/server && go mod download)
+      - (cd apps/desktop && go mod download)
+      - (cd tools/youtube-cookie-helper && go mod download)
+
+  dev:
+    desc: Run the Go backend and Vite frontend
+    deps: [dev:server, dev:client]
+
+  dev:server:
+    desc: Run Go + PocketBase on 127.0.0.1:8090, restarting on changes
+    cmds:
+      - watchexec -r -e go --watch apps/server -- go -C apps/server run . serve --http=127.0.0.1:8090 --dir=../../db/pb_data
+
+  dev:client:
+    cmds: [bun run --cwd apps/client dev]
+
+  dev:docs:
+    cmds: [bun run --cwd apps/website dev]
+
+  build:ui:
+    desc: Build the React UI served by the web server into the Go embed directory
+    cmds:
+      - bun run --cwd apps/client build
+      - mkdir -p apps/server/internal/ui/dist
+      - rm -rf apps/server/internal/ui/dist/*
+      - cp -R apps/client/dist/. apps/server/internal/ui/dist/
+
+  build:ui:desktop:
+    desc: Build the React UI for the desktop shell (VITE_CLIENT_TARGET=desktop, server-setup screen) into apps/desktop/dist
+    cmds:
+      - bun run --cwd apps/client build:desktop
+      - mkdir -p apps/desktop/dist
+      - rm -rf apps/desktop/dist/*
+      - cp -R apps/client/dist-desktop/. apps/desktop/dist/
+
+  build:
+    desc: "Build the web server with embedded UI and thumbnail OCR (-tags ocr: native Tesseract libraries required)"
+    deps: [build:ui]
+    cmds:
+      - mkdir -p bin
+      - cd apps/server && go build -tags ocr -trimpath -ldflags='-s -w' -o ../../bin/viyu .
+
+  desktop:build:
+    desc: Build the Wails 3 desktop application (Linux GTK4 / WebKitGTK 6.0)
+    deps: [build:ui:desktop]
+    cmds:
+      - mkdir -p bin
+      - cd apps/desktop && go build -trimpath -ldflags='-s -w' -o ../../bin/viyu-desktop .
+
+  desktop:run:
+    desc: Build and launch the desktop application
+    deps: [desktop:build]
+    cmds: [./bin/viyu-desktop]
+
+  desktop:package:
+    desc: Package the Linux desktop binary and launcher (native UI/OCR libraries, eng data and yt-dlp required)
+    deps: [desktop:build]
+    cmds:
+      - tar -czf bin/viyu-desktop-linux-{{ARCH}}.tar.gz -C bin viyu-desktop -C ../apps/desktop viyu.desktop icon.png icon.svg
+
+  type-check:
+    cmds: [bun run --cwd apps/client type-check]
+
+  version:check:
+    desc: Check that package.json versions agree (and match the tag on release builds)
+    cmds: [bun scripts/check-version.ts]
+
+  # The Go packages embed the UI, so both UI builds must exist; they run sequentially
+  # because they share the client's incremental TypeScript build state.
+  test:
+    cmds:
+      - task: build:ui
+      - task: build:ui:desktop
+      - cd apps/server && go test -race -tags ocr ./...
+      - cd apps/server && CGO_ENABLED=0 go build ./...
+      - cd apps/desktop && go test ./...
+      - cd tools/youtube-cookie-helper && go test ./...
+      - bun run --cwd apps/client test
+
+  lint:
+    cmds:
+      - task: build:ui
+      - task: build:ui:desktop
+      - task: version:check
+      - bunx biome check .
+      - test -z "$(gofmt -l apps/server apps/desktop tools)"
+      - cd apps/server && go vet ./... && go vet -tags ocr ./...
+      - cd apps/desktop && go vet ./...
+      - cd tools/youtube-cookie-helper && go vet ./...
+
+  audit:
+    desc: Scan Go modules (govulncheck) and JavaScript dependencies (bun audit) for known vulnerabilities
+    cmds:
+      - cd apps/server && govulncheck -tags ocr ./...
+      - cd apps/desktop && govulncheck ./...
+      - cd tools/youtube-cookie-helper && govulncheck ./...
+      - bun audit
+
+  format:
+    cmds:
+      - bunx biome format . --write
+      - gofmt -w apps/server apps/desktop tools
+
+  build:docs:
+    cmds: [bun run --cwd apps/website build]
+
+  docker:build:
+    cmds:
+      - docker build -f docker/Dockerfile --build-arg VERSION="$(bun -p "require('./package.json').version")" -t ghcr.io/kevinbonnoron/viyu:latest .
