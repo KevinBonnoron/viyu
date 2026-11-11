@@ -8,7 +8,7 @@ ARG VERSION=dev
 ARG YT_DLP_VERSION=2026.10.26
 
 # Base images are pinned by tag AND digest (dependabot's docker ecosystem bumps both).
-FROM oven/bun:1.3.10@sha256:b86c67b531d87b4db11470d9b2bd0c519b1976eee6fcd71634e73abfa6230d2e AS frontend
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS frontend
 WORKDIR /src
 COPY package.json bun.lock tsconfig.json LICENSE ./
 COPY apps/client/package.json ./apps/client/package.json
