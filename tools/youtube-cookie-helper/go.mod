@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/browserutils/kooky v0.2.10
-	gopkg.in/ini.v1 v1.67.1
+	gopkg.in/ini.v1 v1.67.3
 )
 
 require (
