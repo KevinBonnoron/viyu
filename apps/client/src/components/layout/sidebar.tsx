@@ -291,15 +291,22 @@ export function Sidebar({ collapsed, onToggle, onOpenCommands }: { collapsed: bo
         </button>
         <SidebarNotifications navClass={navClass} showLabels={showLabels} />
         <SidebarTheme navClass={navClass} showLabels={showLabels} />
-        <div className="hidden justify-end pt-1 md:flex">
+        <div className="hidden justify-end md:flex">
           <button
             type="button"
             aria-label={t(collapsed ? 'ui.shell.expandSidebar' : 'ui.shell.collapseSidebar')}
             title={t(collapsed ? 'ui.shell.expandSidebar' : 'ui.shell.collapseSidebar')}
             onClick={onToggle}
-            className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className={cn(
+              'flex h-10 items-center justify-center rounded-lg px-3 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+              collapsed && 'w-full',
+            )}
           >
-            {collapsed ? <PanelLeftOpen aria-hidden="true" className="size-4" /> : <PanelLeftClose aria-hidden="true" className="size-4" />}
+            {collapsed ? (
+              <PanelLeftOpen aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
+            ) : (
+              <PanelLeftClose aria-hidden="true" className="size-[18px]" strokeWidth={1.8} />
+            )}
           </button>
         </div>
         {user && (
