@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MediaGrid } from '@/components/media-grid';
 import { PlatformFilters } from '@/components/platform-filters';
 import { comparePublicationsNewestFirst } from '@/features/video/utils/publication';
@@ -18,6 +18,7 @@ export function VideoGrid({
   showWatched = false,
   filterPlatforms = true,
   onEndReached,
+  loadWhenEmpty = false,
 }: {
   videos: VideoResult[];
   sortByPublication?: boolean;
@@ -26,6 +27,8 @@ export function VideoGrid({
   filterPlatforms?: boolean;
   /** Called when the end of the list comes into view; pass it only while more can be loaded. */
   onEndReached?: () => void;
+  /** The local Feed opts in so shelf exclusion cannot strand source pagination. Other lists keep scroll-only paging. */
+  loadWhenEmpty?: boolean;
 }) {
   const { t } = useI18n();
   const platforms = useMemo(() => [...new Set(videos.map((video) => video.platform))].sort(), [videos]);
@@ -42,6 +45,12 @@ export function VideoGrid({
         : visible,
     [visible, sortByPublication],
   );
+  // No observer is mounted when known filters remove every card, even if an unrelated status query failed.
+  useEffect(() => {
+    if (loadWhenEmpty && ordered.length === 0 && (isReady || isError)) {
+      onEndReached?.();
+    }
+  }, [loadWhenEmpty, ordered.length, isReady, isError, onEndReached]);
   return (
     <div className="space-y-4">
       {filterPlatforms && <PlatformFilters platforms={platforms} selected={platform} onChange={setSelectedPlatform} />}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 /** The part of a live query collection the hook below reads. */
 export interface RowSource<T> {
@@ -32,44 +32,82 @@ export function useChunkedRows<T>(
   ids: readonly string[],
   scope: string,
   build: (chunk: string[]) => RowSource<T>,
-): { rows: readonly T[]; isReady: boolean; isError: boolean } {
+): { rows: readonly T[]; isReady: boolean; isError: boolean; retry: () => void } {
   const unique = useMemo(() => [...new Set(ids)].sort(), [ids]);
   const key = `${scope}|${unique.join(',')}`;
   const latest = useRef({ unique, build });
-  latest.current = { unique, build };
+  const currentKey = useRef(key);
+  useLayoutEffect(() => {
+    latest.current = { unique, build };
+    currentKey.current = key;
+  });
+  const retrySession = useRef<{ key: string; retry: () => void } | null>(null);
   const [state, setState] = useState<ChunkState<T>>({ key: '', sources: EMPTY, version: 0 });
   useEffect(() => {
     const { unique: wanted, build: make } = latest.current;
     let active = true;
-    const sources: RowSource<T>[] = [];
-    for (let offset = 0; offset < wanted.length; offset += CHUNK_SIZE) {
-      sources.push(make(wanted.slice(offset, offset + CHUNK_SIZE)));
-    }
+    const entries: { chunk: string[]; source: RowSource<T>; dispose: () => void }[] = [];
     const notify = () => {
       if (active) {
         setState((previous) => (previous.key === key ? { ...previous, version: previous.version + 1 } : previous));
       }
     };
-    const statusListeners = sources.map((source) => source.on('status:change', notify));
-    const subscriptions = sources.map((source) => source.subscribeChanges(notify));
-    setState({ key, sources, version: 0 });
+    const attach = (chunk: string[]) => {
+      const source = make(chunk);
+      const stop = source.on('status:change', notify);
+      const subscription = source.subscribeChanges(notify);
+      return {
+        chunk,
+        source,
+        dispose: () => {
+          stop();
+          subscription.unsubscribe();
+          void source.cleanup();
+        },
+      };
+    };
+    for (let offset = 0; offset < wanted.length; offset += CHUNK_SIZE) {
+      entries.push(attach(wanted.slice(offset, offset + CHUNK_SIZE)));
+    }
+    const session = {
+      key,
+      retry: () => {
+        let changed = false;
+        for (let index = 0; index < entries.length; index++) {
+          const entry = entries[index];
+          if (entry.source.status === 'error') {
+            entry.dispose();
+            entries[index] = attach(entry.chunk);
+            changed = true;
+          }
+        }
+        if (changed) {
+          const sources = entries.map((entry) => entry.source);
+          setState((previous) => (previous.key === key ? { ...previous, sources, version: previous.version + 1 } : previous));
+        }
+      },
+    };
+    retrySession.current = session;
+    setState({ key, sources: entries.map((entry) => entry.source), version: 0 });
     return () => {
       active = false;
-      for (const stop of statusListeners) {
-        stop();
+      if (retrySession.current === session) {
+        retrySession.current = null;
       }
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
-      for (const source of sources) {
-        void source.cleanup();
+      for (const entry of entries) {
+        entry.dispose();
       }
     };
+  }, [key]);
+  const retry = useCallback(() => {
+    if (currentKey.current === key && retrySession.current?.key === key) {
+      retrySession.current.retry();
+    }
   }, [key]);
   const current = state.key === key ? state : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` marks changes inside the sources, which the memo must follow.
   const rows = useMemo(() => (current ? current.sources.flatMap((source) => source.toArray) : (EMPTY as readonly T[])), [current?.sources, current?.version]);
   const isError = !!current?.sources.some((source) => source.status === 'error');
   const isReady = unique.length === 0 || (!!current && current.sources.every((source) => source.status === 'ready'));
-  return { rows, isReady, isError };
+  return { rows, isReady, isError, retry };
 }

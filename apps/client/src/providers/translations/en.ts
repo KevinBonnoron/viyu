@@ -283,6 +283,8 @@ export const en = {
   'feed.empty': 'No recommendations yet. Like more videos to improve your feed.',
   'feed.all': 'All',
   'feed.allEmpty': 'No recommendations available from your connected sources or Viyu yet.',
+  'continue.title': 'Continue watching',
+  'continue.loadError': 'Unable to load videos to resume.',
   'video.watched': 'Watched',
   'channel.live': 'LIVE',
   'player.controls.goLive': 'Back to live',

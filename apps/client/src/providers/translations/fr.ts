@@ -288,6 +288,8 @@ export const fr = {
   'feed.empty': 'Aucune recommandation pour le moment. Aimez davantage de vidéos pour améliorer votre fil.',
   'feed.all': 'Tout',
   'feed.allEmpty': 'Aucune recommandation disponible pour le moment dans Viyu ou les sources connectées.',
+  'continue.title': 'Reprendre la lecture',
+  'continue.loadError': 'Impossible de charger les vidéos à reprendre.',
   'video.watched': 'Déjà regardée',
   'channel.live': 'EN DIRECT',
   'player.controls.goLive': 'Revenir au direct',

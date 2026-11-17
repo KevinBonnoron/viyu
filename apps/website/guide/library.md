@@ -13,6 +13,21 @@ player, but not from search or history.
 Unfinished videos show the active profile's saved playback progress on their thumbnail in **Feed** and **Subscriptions**, as
 in **History**. Live streams do not show a resume bar.
 
+Above the local feed, **Continue watching** lists the videos the profile started and did not finish, the last one played
+first, up to twelve.
+A video leaves the row when a saved checkpoint reaches 90 % of its duration (including after seeking there), when its
+accumulated watch time reaches 90 %, or when it is marked **Watched** or **Not interested**.
+The shelf is hidden when there is nothing to resume. A video shown there is not repeated in the list below it.
+History loads in batches until twelve eligible videos are found or it is exhausted. Disabled platforms, videos marked
+**Not interested**, and subscriber-only videos when **Hide subscriber-only videos** is enabled do not occupy those twelve
+slots. The row also works for a profile with only watch history, without likes, subscriptions or connected sources.
+The row waits for display settings before showing cards; if settings cannot be loaded, it uses the normal defaults
+instead of staying in a loading state. If loading fails, **Retry** retries the failed profile, reaction queries or history
+page without discarding unrelated loaded data. Existing cards keep their current progress and order while reactions load,
+and a known **Not interested** reaction removes a card immediately.
+Only the local **All** feed skips pages whose remaining cards are hidden; connected-source feeds keep their scroll-based
+pagination.
+
 ## Mobile navigation
 
 Touchscreens keep the bottom navigation in portrait and landscape; rotating the device does not switch to the desktop sidebar.
@@ -62,6 +77,9 @@ The palette does not open over another modal form or confirmation.
 narrows the timeline and the search field filters titles and creators. The sidebar counts the profile's subscriptions.
 
 - Expired channel listings are refreshed in the background, a few at a time; cached videos show immediately.
+- **Continue watching** also tops the **Videos** tab: the unfinished videos of the channels you follow, narrowed by the
+  selected channels and platform. Older eligible videos are still found when recent history belongs to other channels.
+  It is hidden while you search.
 - Exact publication dates come from the platform or, for YouTube, the channel's public RSS feed. Missing dates are never
   invented, and videos with unknown dates sort last.
 - **Same creator on several platforms**: when a creator's YouTube and Twitch channels share a name, Viyu links the two

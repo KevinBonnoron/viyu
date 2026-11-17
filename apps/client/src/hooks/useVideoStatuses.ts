@@ -1,5 +1,5 @@
 import { and, createLiveQueryCollection, eq, inArray, useLiveQuery } from '@tanstack/react-db';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { videoReactionCollection } from '@/collections/video-reaction.collection';
 import { watchHistoryCollection } from '@/collections/watch-history.collection';
 import { asRowSource, useChunkedRows } from '@/hooks/useChunkedRows';
@@ -14,7 +14,12 @@ const NO_IDS: readonly string[] = [];
  * rows of these videos are loaded (in chunks, never one query over the whole history), and the answer is live: a video
  * watched or liked while the list is open changes at once. A video the profile never met has no entry.
  */
-export function useVideoStatuses(videoIds: readonly string[]): { statuses: ReadonlyMap<string, VideoStatus>; isReady: boolean; isError: boolean } {
+export function useVideoStatuses(videoIds: readonly string[]): {
+  statuses: ReadonlyMap<string, VideoStatus>;
+  isReady: boolean;
+  isError: boolean;
+  retry: () => void;
+} {
   const { activeProfile, isReady: profileReady, isError: profileError } = useProfiles();
   const profileId = activeProfile?.id ?? '';
   const ids = profileId ? videoIds : NO_IDS;
@@ -26,7 +31,30 @@ export function useVideoStatuses(videoIds: readonly string[]): { statuses: Reado
       }),
     ),
   );
-  const reactions = useChunkedRows<VideoReactionRecord>(ids, profileId, (chunk) =>
+  const reactions = useVideoReactions(ids);
+  const statuses = useMemo(() => buildVideoStatuses(histories.rows, reactions.rows), [histories.rows, reactions.rows]);
+  const retry = useCallback(() => {
+    histories.retry();
+    reactions.retry();
+  }, [histories.retry, reactions.retry]);
+  return {
+    statuses,
+    isReady: profileReady && !!activeProfile && histories.isReady && reactions.isReady,
+    isError: profileError || histories.isError || reactions.isError,
+    retry,
+  };
+}
+
+/** Only the active profile's reactions, for consumers that already own their history rows. Partial ready chunks stay live. */
+export function useVideoReactions(videoIds: readonly string[]): {
+  rows: readonly VideoReactionRecord[];
+  isReady: boolean;
+  isError: boolean;
+  retry: () => void;
+} {
+  const { activeProfile, isReady: profileReady, isError: profileError } = useProfiles();
+  const profileId = activeProfile?.id ?? '';
+  const reactions = useChunkedRows<VideoReactionRecord>(profileId ? videoIds : NO_IDS, profileId, (chunk) =>
     asRowSource(
       createLiveQueryCollection({
         query: (q) =>
@@ -35,11 +63,11 @@ export function useVideoStatuses(videoIds: readonly string[]): { statuses: Reado
       }),
     ),
   );
-  const statuses = useMemo(() => buildVideoStatuses(histories.rows, reactions.rows), [histories.rows, reactions.rows]);
   return {
-    statuses,
-    isReady: profileReady && !!activeProfile && histories.isReady && reactions.isReady,
-    isError: profileError || histories.isError || reactions.isError,
+    rows: reactions.rows,
+    isReady: profileReady && !!activeProfile && reactions.isReady,
+    isError: profileError || reactions.isError,
+    retry: reactions.retry,
   };
 }
 

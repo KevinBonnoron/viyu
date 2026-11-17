@@ -12,6 +12,8 @@ and logout. The search field in Settings looks through all tabs, ignoring accent
   a file into another Viyu server. Importing merges: profiles match by name, subscriptions by profile and channel, reactions
   and history by profile and video; nothing is deleted. The file contains your viewing data, so import only into a server
   you trust.
+  An imported entry is marked watched when its saved position or accumulated watch time reaches 90 % of a known duration,
+  even if the file says otherwise. Explicit watched marks are kept, and an unknown duration does not imply completion.
 
 ## Profiles
 
@@ -37,8 +39,8 @@ Settings → Playback has two groups:
 - **Content and display**: hide Shorts, hide watched videos, hide subscriber-only videos (Twitch) and original titles.
 
 Hiding watched videos applies to feeds, subscriptions and search, never to history or likes, and is based on the active
-profile's Viyu history, not your full YouTube history. Hiding subscriber-only videos also keeps them out of the
-new-video notifications.
+profile's Viyu history, not your full YouTube history. Hiding subscriber-only videos also keeps them out of
+**Continue watching** and new-video notifications.
 
 ## Native apps
 

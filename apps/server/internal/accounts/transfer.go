@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -599,7 +600,15 @@ func (s *Service) merge(tx core.App, userID string, data *ExportData, counts map
 			existing.Set("video_duration", entry.VideoDuration)
 		}
 		existing.Set("position", max(entry.Position, 0))
-		existing.Set("watched", entry.Watched)
+		duration := existing.GetFloat("video_duration")
+		position := existing.GetFloat("position")
+		durationWatched := existing.GetFloat("duration_watched")
+		// Completion is compared on the millisecond grid used by saved watch time, not a binary 0.9 product.
+		threshold := math.Ceil(math.Round(duration*1000)/10*9) / 1000
+		complete := duration > 0 && !math.IsInf(duration, 0) && threshold > 0 &&
+			((!math.IsInf(position, 0) && position >= threshold) ||
+				(!math.IsInf(durationWatched, 0) && durationWatched >= threshold))
+		existing.Set("watched", entry.Watched || complete)
 		if err := tx.Save(existing); err != nil {
 			return err
 		}
