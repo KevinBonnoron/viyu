@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ChannelFilters } from '@/components/channel-filters';
+import { ContinueWatching } from '@/components/continue-watching';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorSnackbar } from '@/components/error-snackbar';
 import { GroupWithDialog } from '@/components/group-with-dialog';
@@ -16,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
+import { useContinueWatching } from '@/hooks/useContinueWatching';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useGroupSubscriptions } from '@/hooks/useSubscriptions';
 import { useSubscriptionsLive } from '@/hooks/useSubscriptionsLive';
@@ -318,6 +320,8 @@ function LocalSubscriptions({
     () => [...new Set(scoped.filter((item) => !activePlatform || item.platform === activePlatform).map((item) => item.id))].sort(),
     [scoped, activePlatform],
   );
+  // The shelf is hidden while searching; the videos it shows are left out of the timeline below it, not shown twice.
+  const resume = useContinueWatching(channelIds, active && !searched);
   const empty = isReady && subscriptions.length === 0;
   // Streams in progress come first, whatever the page of videos loaded below: they honour the selected channels, the platform and the search.
   const liveVideos = useMemo<VideoResult[]>(() => {
@@ -415,6 +419,7 @@ function LocalSubscriptions({
   }
   return (
     <>
+      <ContinueWatching items={resume.items} isError={resume.isError} onRetry={resume.retry} />
       {active && <PlatformFilters platforms={platforms} selected={activePlatform} onChange={setPlatform} />}
       <SubscriptionVideoPages
         key={`${profileId}|${channelIds.join(',')}|${searched}|${hideSubscriberOnly}`}
@@ -424,6 +429,7 @@ function LocalSubscriptions({
         query={searched}
         liveVideos={liveVideos}
         visible={active}
+        excludedIds={resume.ids}
         refreshing={refresh.pending}
         refreshFailed={refresh.failed}
         onRetryRefresh={() => setAttempt((value) => value + 1)}

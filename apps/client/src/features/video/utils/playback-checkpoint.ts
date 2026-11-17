@@ -21,7 +21,7 @@ export function nextDurationWatched(stored: number, savedPlayed: number, played:
   return Math.round(capped * 1000) / 1000;
 }
 
-/** The share of a video's length at which a checkpoint marks it watched. This is the only place that threshold exists. */
+/** The share of a video's length at which a client playback checkpoint marks it watched. */
 const WATCHED_FRACTION = 0.9;
 
 /**

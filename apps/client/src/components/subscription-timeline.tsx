@@ -80,6 +80,7 @@ export function SubscriptionVideoPages({
   query,
   hideSubscriberOnly,
   liveVideos,
+  excludedIds,
   visible,
   refreshing,
   refreshFailed,
@@ -92,6 +93,8 @@ export function SubscriptionVideoPages({
   query: string;
   hideSubscriberOnly: boolean;
   liveVideos: VideoResult[];
+  /** `videos` record ids shown elsewhere on the page (the continue-watching row): left out of the timeline. */
+  excludedIds: ReadonlySet<string>;
   visible: boolean;
   refreshing: boolean;
   refreshFailed: boolean;
@@ -153,7 +156,7 @@ export function SubscriptionVideoPages({
   const settled = ready && !fetching && !refreshing && !failed;
   // A stream already stored as a video is shown once, as its live card.
   const liveIds = new Set(liveVideos.map((video) => `${video.platform}:${video.id}`));
-  const shown = [...liveVideos, ...videos.filter((video) => !liveIds.has(`${video.platform}:${video.id}`))];
+  const shown = [...liveVideos, ...videos.filter((video) => !liveIds.has(`${video.platform}:${video.id}`) && !excludedIds.has(video.id))];
   return (
     <div className="space-y-4">
       {feedsOfSlices}
@@ -185,7 +188,7 @@ export function SubscriptionVideoPages({
       {settled && shown.length === 0 && refreshFailed && (
         <ErrorSnackbar message={t('errors.sourceRequestFailed')} action={t('common.retry')} onAction={onRetryRefresh} />
       )}
-      {settled && shown.length === 0 && complete && (
+      {settled && shown.length === 0 && excludedIds.size === 0 && complete && (
         <p className="py-8 text-center text-sm text-muted-foreground">{t(query ? 'subscriptions.noSearchResults' : 'subscriptions.filter.empty')}</p>
       )}
     </div>

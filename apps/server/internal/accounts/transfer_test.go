@@ -384,6 +384,71 @@ func TestImportCreatesPublicStubsFromValidatedIdentifiersOnly(t *testing.T) {
 	}
 }
 
+func TestImportNormalizesHistoryCompletion(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	user, _ := e.user(t, "import-completion@example.test", "")
+
+	tests := []struct {
+		name           string
+		duration       float64
+		storedDuration float64
+		position       float64
+		watchTime      float64
+		manual         bool
+		wantWatched    bool
+		wantDuration   float64
+	}{
+		{name: "position at threshold", duration: 100, position: 90, watchTime: 20, wantWatched: true, wantDuration: 100},
+		{name: "watch time at threshold", duration: 100, position: 20, watchTime: 90, wantWatched: true, wantDuration: 100},
+		{name: "decimal position at threshold", duration: 13, position: 11.700, watchTime: 1, wantWatched: true, wantDuration: 13},
+		{name: "decimal position one millisecond below", duration: 13, position: 11.699, watchTime: 1, wantDuration: 13},
+		{name: "decimal watch time at threshold", duration: 13, position: 1, watchTime: 11.700, wantWatched: true, wantDuration: 13},
+		{name: "decimal watch time one millisecond below", duration: 13, position: 1, watchTime: 11.699, wantDuration: 13},
+		{name: "both below threshold", duration: 100, position: 89, watchTime: 89, wantDuration: 100},
+		{name: "position above threshold", duration: 100, position: 95, watchTime: 20, wantWatched: true, wantDuration: 100},
+		{name: "watch time above threshold", duration: 100, position: 20, watchTime: 95, wantWatched: true, wantDuration: 100},
+		{name: "manual mark without duration", position: 20, watchTime: 30, manual: true, wantWatched: true},
+		{name: "unknown duration", position: 1000, watchTime: 1000},
+		{name: "preserved duration completes", storedDuration: 100, position: 90, watchTime: 10, wantWatched: true, wantDuration: 100},
+		{name: "preserved duration still unfinished", storedDuration: 100, position: 89, watchTime: 89, wantDuration: 100},
+		{name: "import duration overrides stored", duration: 200, storedDuration: 100, position: 90, watchTime: 90, wantDuration: 200},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := ExportHistory{
+				Profile: tc.name, Video: e.videoRef(exportVideoID), WatchedAt: "2026-02-03 04:05:06.000Z",
+				VideoDuration: tc.duration, Position: tc.position, DurationWatched: tc.watchTime, Watched: tc.manual,
+			}
+			if tc.storedDuration > 0 {
+				initial := entry
+				initial.VideoDuration = tc.storedDuration
+				initial.Position = 0
+				initial.DurationWatched = 0
+				if _, err := e.svc.Import(user.Id, importData(ExportData{History: []ExportHistory{initial}})); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := e.svc.Import(user.Id, importData(ExportData{History: []ExportHistory{entry}})); err != nil {
+				t.Fatal(err)
+			}
+			profile, err := e.app.FindFirstRecordByFilter("profiles", "user = {:user} && name = {:name}", dbx.Params{"user": user.Id, "name": tc.name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			history, err := e.app.FindFirstRecordByFilter("watch_history", "profile = {:profile}", dbx.Params{"profile": profile.Id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if history.GetBool("watched") != tc.wantWatched || history.GetFloat("video_duration") != tc.wantDuration ||
+				history.GetFloat("position") != tc.position || history.GetFloat("duration_watched") != tc.watchTime {
+				t.Fatalf("imported history: watched=%v duration=%v position=%v watch time=%v",
+					history.GetBool("watched"), history.GetFloat("video_duration"), history.GetFloat("position"), history.GetFloat("duration_watched"))
+			}
+		})
+	}
+}
+
 func TestImportDoesNotAttachAPrivateRecordOfAnotherAccount(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)

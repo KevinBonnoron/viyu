@@ -1,6 +1,7 @@
 import { createFileRoute, Link, redirect, useLocation } from '@tanstack/react-router';
 import { Play, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ContinueWatching } from '@/components/continue-watching';
 import { EmptyState } from '@/components/empty-state';
 import { FilterSkeleton } from '@/components/filter-skeleton';
 import { PageTitle } from '@/components/page-title';
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { VideoGrid } from '@/features/video';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
+import { useContinueWatching } from '@/hooks/useContinueWatching';
 import { useLatestLike } from '@/hooks/useVideoStatuses';
 import { api } from '@/lib/api';
 import { requestError } from '@/lib/api-error';
@@ -163,13 +165,16 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
       }
     }
   }
+  const resume = useContinueWatching();
   const combined = [...merged.values()];
-  const pending = loading || (!likesReady && !likesError) || (!subscriptionsReady && !subscriptionsError) || remoteFeeds.some((feed) => feed.loading);
-  const hasErrors = !!error || likesError || subscriptionsError || remoteFeeds.some((feed) => feed.error);
+  const rest = combined.filter((video) => !resume.ids.has(video.id));
+  const feedPending = loading || (!likesReady && !likesError) || (!subscriptionsReady && !subscriptionsError) || remoteFeeds.some((feed) => feed.loading);
+  const pending = feedPending || (!resume.isReady && !resume.isError);
+  const hasErrors = !!error || resume.isError || likesError || subscriptionsError || remoteFeeds.some((feed) => feed.error);
   const more = remoteFeeds.filter((feed) => feed.hasMore && !feed.loading && !feed.error);
   const loadMore = useCallback(() => {
     const signal = remoteAbort.current?.signal;
-    if (!signal || pending) {
+    if (!signal || feedPending) {
       return;
     }
     for (const feed of remoteFeeds) {
@@ -177,9 +182,9 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
         void loadSource(feed.source.platform, feed.page + 1, signal);
       }
     }
-  }, [remoteFeeds, pending, loadSource]);
+  }, [remoteFeeds, feedPending, loadSource]);
 
-  if (!pending && !hasErrors && !hasActivity && remoteFeeds.length === 0) {
+  if (!pending && !hasErrors && !hasActivity && remoteFeeds.length === 0 && resume.items.length === 0) {
     return (
       <EmptyState icon={Play} title={t('feed.welcomeTitle')} description={t('feed.welcomeDescription')} className="min-h-[360px]">
         <Button asChild variant="outline">
@@ -193,6 +198,7 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
   }
   return (
     <div className="space-y-4">
+      <ContinueWatching items={resume.items} isError={resume.isError} onRetry={resume.retry} />
       {(likesError || subscriptionsError) && (
         <p role="alert" className="text-destructive">
           {t('ui.library.loadError')}
@@ -212,14 +218,18 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
           <VideoGridSkeleton />
         </div>
       )}
-      {combined.length > 0 && <VideoGrid videos={combined} historyActions onEndReached={more.length > 0 && !pending ? loadMore : undefined} />}
+      {(rest.length > 0 || more.length > 0) && (
+        <VideoGrid videos={rest} historyActions loadWhenEmpty onEndReached={more.length > 0 && !feedPending ? loadMore : undefined} />
+      )}
       {pending && (
         <div aria-live="polite" aria-busy="true" className="space-y-4">
           <span className="sr-only">{t('feed.loading')}</span>
           <VideoGridSkeleton />
         </div>
       )}
-      {!pending && !hasErrors && combined.length === 0 && <p className="text-muted-foreground">{remoteFeeds.length ? t('feed.allEmpty') : t('feed.empty')}</p>}
+      {!pending && !hasErrors && combined.length === 0 && resume.items.length === 0 && (
+        <p className="text-muted-foreground">{remoteFeeds.length ? t('feed.allEmpty') : t('feed.empty')}</p>
+      )}
     </div>
   );
 }
