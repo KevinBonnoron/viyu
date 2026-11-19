@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ErrorSnackbar } from '@/components/error-snackbar';
 import { MediaGrid } from '@/components/media-grid';
 import { PlatformFilters } from '@/components/platform-filters';
+import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { comparePublicationsNewestFirst } from '@/features/video/utils/publication';
+import { useUserSettings } from '@/hooks/useUserSettings';
 import { useVisibleVideos } from '@/hooks/useVisibleVideos';
+import type { VideoStatus } from '@/lib/video-status';
 import { useI18n } from '@/providers/i18n-provider';
+import { useProfiles } from '@/providers/profiles-provider';
 import type { VideoResult } from '@/types';
 import { VideoCard } from './video-card';
 import { VideoCardMenu } from './video-card-menu';
@@ -36,33 +41,57 @@ export function VideoGrid({
   const platform = filterPlatforms && selectedPlatform && platforms.includes(selectedPlatform) ? selectedPlatform : undefined;
   const candidates = useMemo(() => (platform ? videos.filter((video) => video.platform === platform) : videos), [videos, platform]);
   // History is a personal list: what was opened stays visible, so it is only filtered in discovery lists.
-  const { visible, statuses, isReady, isError } = useVisibleVideos(candidates, asVideo, { discovery: !showWatched, hideDismissed: !showWatched });
+  const {
+    visible,
+    statuses,
+    isReady: statusesReady,
+    isError,
+    retry,
+  } = useVisibleVideos(candidates, asVideo, {
+    discovery: !showWatched,
+    hideDismissed: !showWatched,
+  });
+  const { activeProfile } = useProfiles();
+  const { isReady: settingsReady } = useUserSettings();
+  const isReady = statusesReady && settingsReady;
+  // Appending a page must not withdraw the checked cards or publish unchecked ones.
+  const published = useRef<{ profileId: string | undefined; statuses: ReadonlyMap<string, VideoStatus>; ids: ReadonlySet<string> }>({
+    profileId: undefined,
+    statuses: new Map(),
+    ids: new Set(),
+  });
+  const checked = isReady ? visible : visible.filter((video) => published.current.profileId === activeProfile?.id && published.current.ids.has(video.id));
+  useEffect(() => {
+    if (isReady) {
+      published.current = { profileId: activeProfile?.id, statuses, ids: new Set(visible.map((video) => video.id)) };
+    }
+  }, [isReady, activeProfile?.id, statuses, visible]);
   // A stream in progress comes before everything else; the rest is newest first.
   const ordered = useMemo(
     () =>
       sortByPublication
-        ? [...visible].sort((a, b) => Number(!!b.live) - Number(!!a.live) || comparePublicationsNewestFirst(a.published, b.published))
-        : visible,
-    [visible, sortByPublication],
+        ? [...checked].sort((a, b) => Number(!!b.live) - Number(!!a.live) || comparePublicationsNewestFirst(a.published, b.published))
+        : checked,
+    [checked, sortByPublication],
   );
   // No observer is mounted when known filters remove every card, even if an unrelated status query failed.
   useEffect(() => {
-    if (loadWhenEmpty && ordered.length === 0 && (isReady || isError)) {
+    if (loadWhenEmpty && ordered.length === 0 && isReady) {
       onEndReached?.();
     }
-  }, [loadWhenEmpty, ordered.length, isReady, isError, onEndReached]);
+  }, [loadWhenEmpty, ordered.length, isReady, onEndReached]);
   return (
     <div className="space-y-4">
       {filterPlatforms && <PlatformFilters platforms={platforms} selected={platform} onChange={setSelectedPlatform} />}
-      {videos.length > 0 && ordered.length === 0 ? (
+      {isReady && videos.length > 0 && ordered.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('video.allHidden')}</p>
       ) : (
         <MediaGrid
           items={ordered}
           identity={identityOf}
-          onEndReached={onEndReached}
+          onEndReached={isReady ? onEndReached : undefined}
           renderItem={(video) => {
-            const status = statuses.get(video.id);
+            const status = statuses.get(video.id) ?? (isReady ? undefined : published.current.statuses.get(video.id));
             const isWatched = !video.live && !!status?.watched;
             return (
               <VideoCard
@@ -85,6 +114,13 @@ export function VideoGrid({
           }}
         />
       )}
+      {!isReady && !isError && (
+        <div aria-live="polite" aria-busy="true">
+          <span className="sr-only">{t('search.moreLoading')}</span>
+          <VideoGridSkeleton />
+        </div>
+      )}
+      {isError && <ErrorSnackbar message={t('errors.requestFailed')} action={t('common.retry')} onAction={retry} />}
     </div>
   );
 }

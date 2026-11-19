@@ -65,7 +65,7 @@ export function usePlayerFullscreen(frameRef: RefObject<HTMLElement | null>, vid
     root.style.overflow = 'hidden';
     // A tap on the video itself (which shows the controls), not on a control: the exit button must not upgrade.
     const upgrade = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('button, input, a, [role="menu"], [data-chapters]')) {
+      if (event.target instanceof Element && event.target.closest('button, input, a, [role="menu"], [data-chapters], [data-player-end-screen]')) {
         return;
       }
       if (!document.fullscreenElement) {

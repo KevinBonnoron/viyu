@@ -18,12 +18,10 @@ import type { ChannelResult } from '@/types';
 export function SeriesPage({
   selectedChannels,
   onCountChange,
-  active,
   query,
 }: {
   selectedChannels?: ChannelResult[];
   onCountChange: (count: number | null) => void;
-  active: boolean;
   query: string;
 }) {
   const { activeProfile, isError, retry } = useProfiles();
@@ -35,37 +33,21 @@ export function SeriesPage({
       </Button>
     );
   }
-  if (!active) {
-    return activeProfile ? (
-      <ProfileSeries
-        key={activeProfile.id}
-        profileId={activeProfile.id}
-        selectedChannels={selectedChannels}
-        onCountChange={onCountChange}
-        active={false}
-        query={query}
-      />
-    ) : null;
-  }
   if (!activeProfile) {
     return <SeriesGridSkeleton />;
   }
-  return (
-    <ProfileSeries key={activeProfile.id} profileId={activeProfile.id} selectedChannels={selectedChannels} onCountChange={onCountChange} active query={query} />
-  );
+  return <ProfileSeries key={activeProfile.id} profileId={activeProfile.id} selectedChannels={selectedChannels} onCountChange={onCountChange} query={query} />;
 }
 
 function ProfileSeries({
   profileId,
   selectedChannels,
   onCountChange,
-  active,
   query,
 }: {
   profileId: string;
   selectedChannels?: ChannelResult[];
   onCountChange: (count: number | null) => void;
-  active: boolean;
   query: string;
 }) {
   const { t, language } = useI18n();
@@ -85,9 +67,6 @@ function ProfileSeries({
   useEffect(() => {
     onCountChange(result && !error ? visibleSeries.length : null);
   }, [result, error, visibleSeries.length, onCountChange]);
-  if (!active) {
-    return null;
-  }
   return (
     <div className="space-y-6">
       {error && <ErrorSnackbar message={t(error)} action={t('common.retry')} onAction={retry} />}

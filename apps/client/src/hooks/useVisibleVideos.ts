@@ -9,7 +9,7 @@ import type { VideoResult } from '@/types';
  * `videoOf` maps an item to its video (a list may mix in other things, like channels, which are always shown).
  * With `discovery` the settings apply (subscriber-only and watched videos may be hidden); `hideDismissed` also drops
  * the videos marked "not interested". A stream in progress is never "watched" or dismissed: it is on air now.
- * Nothing is hidden until the settings and the statuses are known.
+ * Known statuses apply immediately, including while another chunk is loading; consumers wait for `isReady` before publishing new cards.
  */
 export function useVisibleVideos<T>(
   items: readonly T[],
@@ -19,7 +19,7 @@ export function useVisibleVideos<T>(
   const ids = useMemo(() => items.flatMap((item) => videoOf(item)?.id ?? []), [items, videoOf]);
   const { statuses, isReady, isError, retry } = useVideoStatuses(ids);
   const hideSubscriberOnly = useHideSubscriberOnly() && discovery;
-  const hideWatched = useHideWatched() && discovery && isReady && !isError;
+  const hideWatched = useHideWatched() && discovery;
   const visible = useMemo(
     () =>
       items.filter((item) => {

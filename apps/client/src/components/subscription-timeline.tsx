@@ -148,17 +148,13 @@ export function SubscriptionVideoPages({
       report={report}
     />
   ));
-  // The feeds keep loading while another tab is shown, so coming back finds the timeline ready.
-  if (!visible) {
-    return <>{feedsOfSlices}</>;
-  }
   const loading = !ready || fetching;
   const settled = ready && !fetching && !refreshing && !failed;
   // A stream already stored as a video is shown once, as its live card.
   const liveIds = new Set(liveVideos.map((video) => `${video.platform}:${video.id}`));
   const shown = [...liveVideos, ...videos.filter((video) => !liveIds.has(`${video.platform}:${video.id}`) && !excludedIds.has(video.id))];
   return (
-    <div className="space-y-4">
+    <div hidden={!visible} className="space-y-4">
       {feedsOfSlices}
       {shown.length > 0 && (
         <VideoGrid
@@ -166,7 +162,7 @@ export function SubscriptionVideoPages({
           sortByPublication={false}
           historyActions
           filterPlatforms={false}
-          onEndReached={frontier && !fetching && !failed ? () => void frontier.fetchNextPage() : undefined}
+          onEndReached={visible && frontier && !fetching && !failed ? () => void frontier.fetchNextPage() : undefined}
         />
       )}
       {(loading || (refreshing && shown.length === 0)) && (

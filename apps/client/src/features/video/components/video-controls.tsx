@@ -59,6 +59,7 @@ export function VideoControls({
   videoRef,
   frameRef,
   fullscreen,
+  endScreen,
   touch,
   onToggleFullscreen,
   version,
@@ -82,6 +83,8 @@ export function VideoControls({
   frameRef: RefObject<HTMLElement | null>;
   /** Whether the frame fills the screen (the Fullscreen API, or the sideways view of a phone). */
   fullscreen: boolean;
+  /** The end screen owns the frame and its keyboard interactions. */
+  endScreen: boolean;
   /** Touch layout, as on YouTube's mobile player: play and next in the middle of the video, settings at its top. */
   touch: boolean;
   onToggleFullscreen: () => Promise<void>;
@@ -246,6 +249,11 @@ export function VideoControls({
   }, [onToggleFullscreen]);
 
   useEffect(() => {
+    if (endScreen) {
+      hide();
+      setControlsFocused(false);
+      return;
+    }
     const video = videoRef.current;
     const frame = frameRef.current;
     if (!video || !frame) {
@@ -419,7 +427,22 @@ export function VideoControls({
       window.removeEventListener('keydown', keyboard, true);
       window.removeEventListener('keyup', releaseSpace, true);
     };
-  }, [videoRef, frameRef, version, playPause, toggleMute, toggleFullscreen, reveal, hide, knownDuration, resumePosition, onSeek, language, hoverPointer]);
+  }, [
+    videoRef,
+    frameRef,
+    version,
+    playPause,
+    toggleMute,
+    toggleFullscreen,
+    reveal,
+    hide,
+    knownDuration,
+    resumePosition,
+    onSeek,
+    language,
+    hoverPointer,
+    endScreen,
+  ]);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -592,6 +615,10 @@ export function VideoControls({
     },
     { id: 'speed', label: t('player.speed.label'), value: rateLabel(media.rate), disabled: false },
   ] as const;
+
+  if (endScreen) {
+    return null;
+  }
 
   return (
     <div

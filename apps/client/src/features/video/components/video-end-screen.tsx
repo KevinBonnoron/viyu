@@ -12,12 +12,13 @@ import type { VideoResult } from '@/types';
 /** Seconds the next episode waits before it starts by itself. */
 export const NEXT_EPISODE_COUNTDOWN = 8;
 
-/** The overlay's frame, the look of the player error overlay: a dark layer over the video, content centered above the control bar. */
+/** The overlay's frame, with a dark layer over the video and centered content. */
 function Overlay({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section
       aria-label={label}
-      className="@container/end absolute inset-0 flex flex-col items-center overflow-y-auto bg-black/90 px-3 pb-16 pt-3 text-white sm:px-6 sm:pb-20 sm:pt-6"
+      data-player-end-screen
+      className="@container/end absolute inset-0 flex flex-col items-center overflow-y-auto bg-black/90 p-3 text-white sm:p-6"
     >
       {children}
     </section>

@@ -390,6 +390,7 @@ function VideoPlayer({
   }, [updateSponsorSegment, streamVersion]);
 
   const playerError = streamError ?? metaError;
+  const showEndScreen = ended && !playerError && (endKind === 'suggestions' || (endKind === 'next' && !!nextEpisode));
   const seriesPanel = seriesId ? (
     <>
       {seriesError && !series && <SeriesSyncStatus sync={null} error={seriesError} onRetry={retrySeries} />}
@@ -521,7 +522,7 @@ function VideoPlayer({
             <video
               key={streamVersion}
               ref={videoRef}
-              tabIndex={playerError ? -1 : 0}
+              tabIndex={playerError || showEndScreen ? -1 : 0}
               aria-label={t('player.controls.player')}
               playsInline
               autoPlay={autoplay.autoPlay}
@@ -632,6 +633,7 @@ function VideoPlayer({
               <VideoControls
                 videoRef={videoRef}
                 frameRef={frameRef}
+                endScreen={showEndScreen}
                 fullscreen={fullscreen}
                 touch={playerFullscreen.touch}
                 onToggleFullscreen={playerFullscreen.toggle}
