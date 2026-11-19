@@ -252,6 +252,10 @@ export function VideoControls({
     if (endScreen) {
       hide();
       setControlsFocused(false);
+      seekDrag.current.pointerId = null;
+      seekDrag.current.changed = false;
+      setSeekPreview(null);
+      scrubbing.current = false;
       return;
     }
     const video = videoRef.current;
