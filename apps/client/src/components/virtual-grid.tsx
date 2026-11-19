@@ -1,4 +1,4 @@
-import { defaultRangeExtractor, useWindowVirtualizer } from '@tanstack/react-virtual';
+import { defaultRangeExtractor, measureElement, useWindowVirtualizer } from '@tanstack/react-virtual';
 import { type Key, type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const focusable = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -30,6 +30,15 @@ export function VirtualGrid<T>({
   const virtualizer = useWindowVirtualizer({
     count: rowCount,
     estimateSize: () => (asList ? 116 : 320) + layout.gap,
+    measureElement: (element, entry, instance) => {
+      const size = measureElement(element, entry, instance);
+      if (size > 0) {
+        return size;
+      }
+      // Hidden tabs have no measurable boxes; keep their row sizes instead of collapsing the entire list.
+      const index = instance.indexFromElement(element);
+      return instance.itemSizeCache.get(instance.options.getItemKey(index)) ?? instance.options.estimateSize(index);
+    },
     overscan: 3,
     scrollMargin: layout.offset,
     getItemKey: (row) => getKey(items[row * layout.columns], row * layout.columns),
@@ -63,6 +72,9 @@ export function VirtualGrid<T>({
       return;
     }
     const update = () => {
+      if (element.getClientRects().length === 0) {
+        return;
+      }
       const style = getComputedStyle(sample);
       const columns = style.display === 'grid' ? Math.max(1, style.gridTemplateColumns.split(' ').filter(Boolean).length) : 1;
       const firstMargin = sample.children[0] ? Number.parseFloat(getComputedStyle(sample.children[0]).marginBottom) || 0 : 0;

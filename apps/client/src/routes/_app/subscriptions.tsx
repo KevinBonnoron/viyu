@@ -34,7 +34,7 @@ import type { ChannelRecord, ChannelResult, SubscriptionLive, VideoResult } from
 
 export const Route = createFileRoute('/_app/subscriptions')({
   validateSearch: (search: Record<string, unknown>): { tab?: 'videos' | 'series' } => ({
-    tab: search.tab === 'series' ? 'series' : undefined,
+    tab: search.tab === 'series' || search.tab === 'videos' ? search.tab : undefined,
   }),
   beforeLoad: ({ location, search }) => {
     const params = new URLSearchParams(location.searchStr);
@@ -252,8 +252,12 @@ function ProfileSubscriptions({ series }: { series: boolean }) {
           />
         </div>
       </div>
-      <LocalSubscriptions selectedChannels={selectedChannels} live={live} onCountChange={setVideoCount} active={!series} query={search.trim()} />
-      <SeriesPage selectedChannels={selectedChannels} onCountChange={setSeriesCount} active={series} query={query} />
+      <div hidden={series} className="space-y-6">
+        <LocalSubscriptions selectedChannels={selectedChannels} live={live} onCountChange={setVideoCount} active={!series} query={search.trim()} />
+      </div>
+      <div hidden={!series}>
+        <SeriesPage selectedChannels={selectedChannels} onCountChange={setSeriesCount} query={query} />
+      </div>
     </div>
   );
 }
@@ -321,7 +325,16 @@ function LocalSubscriptions({
     [scoped, activePlatform],
   );
   // The shelf is hidden while searching; the videos it shows are left out of the timeline below it, not shown twice.
-  const resume = useContinueWatching(channelIds, active && !searched);
+  const resume = useContinueWatching(channelIds, !searched);
+  const resumeReady = resume.isReady || resume.isError;
+  const resumeScope = `${profileId}|${channelIds.join(',')}|${searched}`;
+  const [readyResumeScope, setReadyResumeScope] = useState('');
+  useEffect(() => {
+    if (resumeReady) {
+      setReadyResumeScope(resumeScope);
+    }
+  }, [resumeReady, resumeScope]);
+  const waitingForResume = !resumeReady && readyResumeScope !== resumeScope;
   const empty = isReady && subscriptions.length === 0;
   // Streams in progress come first, whatever the page of videos loaded below: they honour the selected channels, the platform and the search.
   const liveVideos = useMemo<VideoResult[]>(() => {
@@ -397,9 +410,6 @@ function LocalSubscriptions({
     }
   }, [isReady, empty, onCountChange]);
 
-  if (!active && (empty || !isReady || !profileId)) {
-    return null;
-  }
   if (empty) {
     return (
       <EmptyState icon={Users} title={t('subscriptions.emptyTitle')} description={t('subscriptions.emptyDescription')}>
@@ -420,7 +430,13 @@ function LocalSubscriptions({
   return (
     <>
       <ContinueWatching items={resume.items} isError={resume.isError} onRetry={resume.retry} />
-      {active && <PlatformFilters platforms={platforms} selected={activePlatform} onChange={setPlatform} />}
+      <PlatformFilters platforms={platforms} selected={activePlatform} onChange={setPlatform} />
+      {waitingForResume && (
+        <div aria-live="polite" aria-busy="true">
+          <span className="sr-only">{t('subscriptions.loading')}</span>
+          <VideoGridSkeleton />
+        </div>
+      )}
       <SubscriptionVideoPages
         key={`${profileId}|${channelIds.join(',')}|${searched}|${hideSubscriberOnly}`}
         hideSubscriberOnly={hideSubscriberOnly}
@@ -428,7 +444,7 @@ function LocalSubscriptions({
         channels={channels}
         query={searched}
         liveVideos={liveVideos}
-        visible={active}
+        visible={active && !waitingForResume}
         excludedIds={resume.ids}
         refreshing={refresh.pending}
         refreshFailed={refresh.failed}
