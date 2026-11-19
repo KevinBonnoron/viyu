@@ -278,7 +278,7 @@ function LocalSubscriptions({
   const { activeProfile } = useProfiles();
   const { data: subscriptions = [], isReady } = useSubscriptions();
   const hideSubscriberOnly = useHideSubscriberOnly();
-  const { isReady: settingsReady } = useUserSettings();
+  const { isReady: settingsReady, isError: settingsError } = useUserSettings();
   const profileId = activeProfile?.id;
   const searched = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const [attempt, setAttempt] = useState(0);
@@ -418,6 +418,9 @@ function LocalSubscriptions({
         </Button>
       </EmptyState>
     );
+  }
+  if (settingsError) {
+    return <ErrorSnackbar message={t('errors.requestFailed')} action={t('common.retry')} onAction={() => window.location.reload()} />;
   }
   if (!isReady || !settingsReady || !profileId) {
     return (

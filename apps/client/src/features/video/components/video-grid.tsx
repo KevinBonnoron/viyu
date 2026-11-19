@@ -45,15 +45,16 @@ export function VideoGrid({
     visible,
     statuses,
     isReady: statusesReady,
-    isError,
-    retry,
+    isError: statusesError,
+    retry: retryStatuses,
   } = useVisibleVideos(candidates, asVideo, {
     discovery: !showWatched,
     hideDismissed: !showWatched,
   });
   const { activeProfile } = useProfiles();
-  const { isReady: settingsReady } = useUserSettings();
+  const { isReady: settingsReady, isError: settingsError } = useUserSettings();
   const isReady = statusesReady && settingsReady;
+  const isError = statusesError || settingsError;
   // Appending a page must not withdraw the checked cards or publish unchecked ones.
   const published = useRef<{ profileId: string | undefined; statuses: ReadonlyMap<string, VideoStatus>; ids: ReadonlySet<string> }>({
     profileId: undefined,
@@ -76,10 +77,10 @@ export function VideoGrid({
   );
   // No observer is mounted when known filters remove every card, even if an unrelated status query failed.
   useEffect(() => {
-    if (loadWhenEmpty && ordered.length === 0 && isReady) {
+    if (loadWhenEmpty && visible.length === 0 && settingsReady && (statusesReady || statusesError)) {
       onEndReached?.();
     }
-  }, [loadWhenEmpty, ordered.length, isReady, onEndReached]);
+  }, [loadWhenEmpty, visible.length, settingsReady, statusesReady, statusesError, onEndReached]);
   return (
     <div className="space-y-4">
       {filterPlatforms && <PlatformFilters platforms={platforms} selected={platform} onChange={setSelectedPlatform} />}
@@ -120,7 +121,13 @@ export function VideoGrid({
           <VideoGridSkeleton />
         </div>
       )}
-      {isError && <ErrorSnackbar message={t('errors.requestFailed')} action={t('common.retry')} onAction={retry} />}
+      {isError && (
+        <ErrorSnackbar
+          message={t('errors.requestFailed')}
+          action={t('common.retry')}
+          onAction={settingsError ? () => window.location.reload() : retryStatuses}
+        />
+      )}
     </div>
   );
 }
