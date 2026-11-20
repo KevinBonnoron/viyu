@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/apierr"
 )
@@ -54,13 +53,13 @@ func masterKey(dataDir, override string) ([]byte, error) {
 		}
 	}
 	readKey := func() ([]byte, error) {
-		f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		f, err := openKeyFile(path)
 		if err != nil {
 			return nil, err
 		}
 		defer f.Close()
 		info, err := f.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		if err != nil || !info.Mode().IsRegular() || !privateKeyMode(info.Mode()) {
 			return nil, fmt.Errorf("source encryption key must be a private regular file")
 		}
 		key, err := io.ReadAll(io.LimitReader(f, 33))

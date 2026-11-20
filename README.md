@@ -136,12 +136,23 @@ Server flags are PocketBase's: `viyu serve --http=127.0.0.1:8090 --dir=db/pb_dat
 Both clients embed only the UI and ask for your server's address (`http://` or `https://`) on first launch.
 They do not run PocketBase, yt-dlp or OCR. Authentication is stored per server; **Change server** is in the account menu.
 
-- **Desktop (Linux only).** `task desktop:run` or `task desktop:package` (a `bin/viyu-desktop-linux-<arch>.tar.gz` with the
-  executable and `.desktop` launcher). Needs GTK4 and WebKitGTK 6.0 on the host; no libraries are bundled, and binaries
-  built in the Nix shell keep Nix runtime references. Not an AppImage; no Windows or macOS build.
-- **Android.** Each release has a debug-signed APK attached (`viyu-<version>-android-debug.apk`, min SDK 24), next to
-  the Linux server binary and the desktop archive. There is no release signing.
-  Locally: `bun run --cwd apps/client build:android`, then `./gradlew assembleDebug` in `apps/android`.
+Each GitHub release attaches:
+
+| File                               | Platform                             | Notes                                                                                                                                                                      |
+| ---------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `viyu-server-<os>-<arch>[.exe]`    | Linux, macOS, Windows × amd64, arm64 | The server, static (pure Go). Without thumbnail OCR, which needs Tesseract: use the Docker image for it. yt-dlp and ffmpeg must be on the `PATH`.                          |
+| `viyu-desktop-linux-<arch>.tar.gz` | Linux amd64, arm64                   | Executable, `.desktop` launcher and icons. Needs GTK4 and WebKitGTK 6.0 on the host (Ubuntu 24.04, Debian 13, Fedora 39 and later).                                        |
+| `viyu-desktop-windows-<arch>.exe`  | Windows 10/11 amd64, arm64           | Requires the WebView2 Runtime (see below). Unsigned: SmartScreen warns on first launch.                                                                                    |
+| `viyu-desktop-macos-universal.zip` | macOS 13+, Apple silicon and Intel   | `Viyu.app`. Unsigned: open it once, then allow it in **System Settings → Privacy & Security → Open Anyway** (on macOS 14 and earlier, right-click it and choose **Open**). |
+| `viyu-<version>-android-debug.apk` | Android 7+ (SDK 24)                  | Debug-signed; there is no release signing.                                                                                                                                 |
+
+- **Windows prerequisite.** If it is missing, install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/consumer/)
+  before launching Viyu. It is usually present on Windows 11 and many Windows 10 devices, but is not guaranteed to be
+  installed. The released executable does not bundle the runtime.
+- **Desktop.** Locally, Linux only: `task desktop:run` or `task desktop:package` (a `bin/viyu-desktop-linux-<arch>.tar.gz`).
+  Binaries built in the Nix shell keep Nix runtime references; the released archives are built against the system
+  libraries. Not an AppImage. The Windows and macOS builds come from CI only.
+- **Android.** Locally: `bun run --cwd apps/client build:android`, then `./gradlew assembleDebug` in `apps/android`.
 
 ## YouTube companion
 
@@ -214,8 +225,9 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
   nothing by itself).
 - **Tag** → `.github/workflows/release.yml`: builds and publishes without testing again (the pull requests did): the
   Docker image for amd64 and arm64 on native runners (`X.Y.Z`, `X.Y`, `X` from 1.0, and `latest` for the latest
-  release), the server binary, the desktop archive and the APK attached to the GitHub release, and the user guide on
-  GitHub Pages. A tag pushed by hand starts it too and gets a GitHub release with generated notes.
+  release), the server and desktop binaries and the APK attached to the GitHub release (see
+  [Native clients](#native-clients)), and the user guide on GitHub Pages. A tag pushed by hand starts it too and gets a
+  GitHub release with generated notes.
 - **Every Monday** → `release.yml` again: the latest release's image rebuilt from scratch with the latest yt-dlp, an audit
   of its dependencies, and the caches pull requests read saved on `main`.
 
@@ -225,7 +237,8 @@ The `VERSION` file is the version source: Android and the Docker image label der
 `task version:check` verifies that it is `MAJOR.MINOR.PATCH`; a release run checks that its tag is exactly `v<version>`.
 
 A lefthook pre-commit hook (Biome, gofmt) is installed by the devshell; skip it once with `LEFTHOOK=0`.
-Dependabot proposes weekly updates for Go, Bun (each app), Docker, GitHub Actions and Gradle.
+Dependabot opens one pull request a week that updates Go, Bun (each app), Docker, GitHub Actions and Gradle together
+(a multi-ecosystem group, `build(deps): …`).
 
 OCR for series numbering needs Tesseract and Leptonica and is compiled in with the `ocr` build tag (`go build -tags ocr`).
 The Docker image builds with it and the devshell provides the libraries. Without the tag the server builds without CGO and

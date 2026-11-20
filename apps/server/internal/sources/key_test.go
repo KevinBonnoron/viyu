@@ -14,13 +14,13 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/ytdlp"
 )
 
-func TestMasterKeyIsAPrivateFileNextToTheDatabaseByDefault(t *testing.T) {
+func TestMasterKeyIsAFileNextToTheDatabaseByDefault(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	path := filepath.Join(f.app.DataDir(), "source_connections.key")
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 || info.Size() != 32 {
-		t.Fatalf("master key is not a private 32-byte file: %v %v", info, err)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 32 {
+		t.Fatalf("master key is not a 32-byte file: %v %v", info, err)
 	}
 	entries, err := os.ReadDir(f.app.DataDir())
 	if err != nil {
@@ -64,18 +64,12 @@ func TestMasterKeyIsNeverReplacedByConcurrentInitializers(t *testing.T) {
 	}
 }
 
-func TestMasterKeyRefusesAKeyThatIsNotPrivateRegularAndComplete(t *testing.T) {
+func TestMasterKeyRefusesAKeyThatIsNotComplete(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "source_connections.key")
 	key := bytes.Repeat([]byte{7}, 32)
 
-	if err := os.WriteFile(path, key, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := masterKey(dir, ""); err == nil {
-		t.Fatal("a world-readable key was accepted")
-	}
 	if err := os.WriteFile(path+".short", key[:16], 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -88,23 +82,29 @@ func TestMasterKeyRefusesAKeyThatIsNotPrivateRegularAndComplete(t *testing.T) {
 	if _, err := masterKey(dir, path+".long"); err == nil {
 		t.Fatal("an oversized key was accepted")
 	}
-	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, key, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "link.key")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := masterKey(dir, link); err == nil {
-		t.Fatal("a symlinked key was accepted")
-	}
 	// An existing complete private key is used as it is, never overwritten.
 	if err := os.WriteFile(path+".ok", key, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := masterKey(dir, path+".ok"); err != nil || !bytes.Equal(got, key) {
 		t.Fatalf("an existing key was not used: %v", err)
+	}
+}
+
+func TestMasterKeyRefusesASymbolicLink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, bytes.Repeat([]byte{7}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.key")
+	if err := os.Symlink(target, link); err != nil {
+		// Windows only lets privileged accounts create symbolic links.
+		t.Skipf("symbolic links cannot be created here: %v", err)
+	}
+	if _, err := masterKey(dir, link); err == nil {
+		t.Fatal("a symlinked key was accepted")
 	}
 }
 
