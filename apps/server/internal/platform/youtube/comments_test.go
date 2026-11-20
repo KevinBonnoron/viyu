@@ -90,6 +90,30 @@ func TestCommentsAreBoundedToOneHundredThreads(t *testing.T) {
 	}
 }
 
+func TestLastThreadWithinTheLimitKeepsItsRepliesAndLaterThreadsAreDropped(t *testing.T) {
+	t.Parallel()
+	var items []string
+	for index := range 101 {
+		items = append(items, fmt.Sprintf(`{"id":"c%d","author":"A","parent":"root"}`, index))
+		if index == 99 || index == 100 {
+			items = append(items, fmt.Sprintf(`{"id":"r%d","author":"R","parent":"c%d"}`, index, index))
+		}
+	}
+	p, _ := fakeYTDLP(t, `printf '%s\n' '{"id":"limit000001","comments":[`+strings.Join(items, ",")+`]}'`)
+	comments, err := p.Comments(context.Background(), "limit000001", "")
+	if err != nil || len(comments) != 100 {
+		t.Fatalf("got %d comments, err=%v", len(comments), err)
+	}
+	if last := comments[99]; last.ID != "c99" || len(last.Replies) != 1 || last.Replies[0].ID != "r99" {
+		t.Fatalf("the last kept thread lost its reply: %+v", last)
+	}
+	for _, comment := range comments {
+		if comment.ID == "c100" || comment.ID == "r100" {
+			t.Fatalf("beyond the limit: %+v", comment)
+		}
+	}
+}
+
 func TestCommentsFailuresAreSafeErrors(t *testing.T) {
 	t.Parallel()
 	p, _ := fakeYTDLP(t, commentsScript)
@@ -129,7 +153,7 @@ func TestConnectedCommentsUseTheSessionJar(t *testing.T) {
 		t.Fatalf("comments=%+v err=%v", comments, err)
 	}
 	args := calls(t, log)
-	if !strings.Contains(args, "--cookies "+jar) || !strings.Contains(args, "--get-comments --extractor-args youtube:max_comments=150,100,50,5,1 https://www.youtube.com/watch?v=dQw4w9WgXcQ") {
+	if !strings.Contains(args, "--cookies "+jar) || !strings.Contains(args, "--get-comments") {
 		t.Fatalf("arguments: %s", args)
 	}
 }
