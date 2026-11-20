@@ -16,6 +16,7 @@
 * Collapse long comments and replies to four lines with show-more/show-less controls, while keeping short messages at their natural height.
 * Refine comment metadata and reply threads with singular/plural labels, a stable text-and-chevron toggle, a subtly tinted reply group and no mobile indent.
 * Keep the visible reply count as the toggle's accessible name in both states, so speech-input users can activate it by its label.
+* Align quick-search tab labels and their keyboard shortcuts on the same text baseline.
 
 ## [0.1.0](https://github.com/KevinBonnoron/viyu/compare/v0.0.1...v0.1.0) (2026-11-15)
 

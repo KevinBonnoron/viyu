@@ -285,7 +285,7 @@ export function SearchDialog({
             aria-pressed={mode === value}
             onClick={() => onModeChange(value)}
             className={cn(
-              'flex flex-1 flex-wrap items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium',
+              'flex flex-1 flex-wrap items-baseline justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium',
               mode === value ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted',
             )}
           >
