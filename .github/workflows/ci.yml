@@ -310,6 +310,46 @@ jobs:
           # Reads the layers release.yml's weekly run caches on main; pull requests do not write any.
           cache-from: type=gha,scope=linux-amd64
 
+  # The desktop shell builds for every platform a release ships: Linux against the system GTK4/WebKitGTK,
+  # Windows cross-compiled, macOS on a macOS runner. Only the build is checked: the Go job tests the shell.
+  desktop:
+    name: Desktop (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux
+            runner: ubuntu-24.04
+          - target: windows
+            runner: ubuntu-24.04
+          - target: macos
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install GTK4 and WebKitGTK
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The workspace sets the Go version every module builds with.
+          go-version-file: go.work
+          cache-dependency-path: apps/desktop/go.sum
+      - name: Build
+        working-directory: apps/desktop
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # The embedded UI only has to exist for the build.
+          mkdir -p dist && touch dist/index.html
+          case "$TARGET" in
+            linux | macos) CGO_ENABLED=1 go build -o /dev/null . ;;
+            windows) CGO_ENABLED=0 GOOS=windows go build -ldflags="-H windowsgui" -o /dev/null . ;;
+          esac
+
   # Always builds the docs when relevant to catch breakage; release.yml deploys them.
   docs:
     name: Docs build

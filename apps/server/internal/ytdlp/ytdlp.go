@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -288,13 +287,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec, consume func(stdout io.Read
 	}
 	defer slot.Release()
 	cmd := exec.CommandContext(ctx, r.binary, append([]string{"--ignore-config", "--no-mark-watched"}, spec.Args...)...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	killTreeOnCancel(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	var stderr boundedLog
 	cmd.Stderr = &stderr
