@@ -1,5 +1,5 @@
 import { ChevronDown, ThumbsUp } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ErrorSnackbar } from '@/components/error-snackbar';
 import { LinkedText } from '@/components/linked-text';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,9 +10,29 @@ import { cn, formatCompactNumber } from '@/lib/utils';
 import { type TranslationKey, useI18n } from '@/providers/i18n-provider';
 import type { VideoComment } from '@/types';
 
-/** One comment body — author, date, text, likes — shared by top-level comments and their replies. */
-function CommentBody({ comment, language }: { comment: VideoComment; language: string }) {
+/** One comment body and its metadata row, with an optional reply toggle for top-level comments. */
+function CommentBody({ comment, language, children }: { comment: VideoComment; language: string; children?: ReactNode }) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const textId = useId();
+
+  useLayoutEffect(() => {
+    const element = textRef.current;
+    if (!element) {
+      return;
+    }
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
+      setOverflows(element.scrollHeight > lineHeight * 4 + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [comment.text, language]);
+
   const published = comment.publishedAt ? new Date(comment.publishedAt) : null;
   const date =
     published && !Number.isNaN(published.getTime())
@@ -28,19 +48,31 @@ function CommentBody({ comment, language }: { comment: VideoComment; language: s
           </time>
         )}
       </div>
-      <p className="whitespace-pre-wrap break-words">
+      <p ref={textRef} id={textId} className={cn('whitespace-pre-wrap break-words leading-5', !expanded && 'line-clamp-4')}>
         <LinkedText text={comment.text} />
       </p>
-      {/* An aria-label instead of a sr-only span: an absolutely positioned descendant's containing
-          block is the panel's relative section, so a sr-only here escapes the card's overflow
-          clipping and lengthens the page by its static position on every comment. */}
-      <span
-        role="img"
-        aria-label={t('player.comments.likes', { count: comment.likeCount })}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground"
-      >
-        <ThumbsUp aria-hidden="true" className="size-3" /> <span aria-hidden="true">{formatCompactNumber(comment.likeCount, language)}</span>
-      </span>
+      {(overflows || expanded) && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={textId}
+          onClick={() => setExpanded((value) => !value)}
+          className="block rounded-sm text-xs font-medium text-primary hover:underline"
+        >
+          {t(expanded ? 'player.comments.showLess' : 'player.comments.showMore')}
+        </button>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span
+          role="img"
+          aria-label={t('player.comments.likes', { count: comment.likeCount })}
+          className="inline-flex shrink-0 items-center gap-1.5 tabular-nums text-muted-foreground"
+        >
+          <ThumbsUp aria-hidden="true" className="size-3.5" />
+          <span aria-hidden="true">{formatCompactNumber(comment.likeCount, language)}</span>
+        </span>
+        {children}
+      </div>
     </div>
   );
 }
@@ -49,23 +81,30 @@ function CommentBody({ comment, language }: { comment: VideoComment; language: s
 function CommentThread({ comment, language }: { comment: VideoComment; language: string }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const repliesId = useId();
   const replies = comment.replies ?? [];
   return (
-    <li className="space-y-1 py-4 text-sm first:pt-0 last:pb-0">
-      <CommentBody comment={comment} language={language} />
-      {replies.length > 0 && (
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-          className="mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
-        >
-          <ChevronDown aria-hidden="true" className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
-          {t(open ? 'player.comments.hideReplies' : 'player.comments.replies', { count: replies.length })}
-        </button>
-      )}
+    <li className="space-y-1 py-3 text-sm first:pt-0 last:pb-0">
+      <CommentBody comment={comment} language={language}>
+        {replies.length > 0 && (
+          <button
+            type="button"
+            aria-label={open ? t('player.comments.hideReplies') : undefined}
+            aria-expanded={open}
+            aria-controls={repliesId}
+            onClick={() => setOpen((value) => !value)}
+            className="inline-flex min-h-8 items-center gap-1 rounded-md px-1.5 font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t(replies.length === 1 ? 'player.comments.replies.one' : 'player.comments.replies.other', { count: replies.length })}
+            <ChevronDown aria-hidden="true" className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
+          </button>
+        )}
+      </CommentBody>
       {open && (
-        <ul className="ml-3 mt-3 space-y-3 border-l-2 border-border/60 pl-3">
+        <ul
+          id={repliesId}
+          className="relative mt-3 space-y-3 rounded-xl bg-muted/40 p-3 before:pointer-events-none before:absolute before:-top-3 before:left-3 before:h-3 before:w-3 before:rounded-bl-lg before:border-b before:border-l before:border-border sm:ml-4"
+        >
           {replies.map((reply) => (
             <li key={reply.id}>
               <CommentBody comment={reply} language={language} />

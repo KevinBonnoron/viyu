@@ -11,12 +11,11 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/ytdlp"
 )
 
-// yt-dlp exposes a bounded comment extraction, not a resumable cursor. The tuple is max_comments,
-// max_parents, max_replies, max_replies_per_thread, max_depth: 100 parent comments with up to 50 replies
-// between them (5 per thread) — fetching every answer thread would need a request per thread, which a
-// whole comment list cannot afford.
+// yt-dlp's max_comments tuple is total, parents, replies, replies per thread, depth.
+// The list starts at depth 1 and reply threads at depth 2: depth 1 silently excludes replies.
+// Keep at most 100 parents and 50 replies (5 per thread), since each reply thread costs another request.
 const (
-	commentArgs   = "150,100,50,5,1"
+	commentArgs   = "150,100,50,5,2"
 	commentsLimit = 100
 )
 
@@ -71,11 +70,13 @@ func (p *Platform) Comments(ctx context.Context, id, cookieFile string) ([]platf
 			repliesByParent[item.Parent] = append(repliesByParent[item.Parent], comment)
 			continue
 		}
+		if len(comments) == commentsLimit {
+			// yt-dlp yields replies right after their parent: keep reading so the last parent's own replies
+			// are not lost, the orphans of any parent beyond the limit being dropped below.
+			continue
+		}
 		indexByID[item.ID] = len(comments)
 		comments = append(comments, comment)
-		if len(comments) == commentsLimit {
-			break
-		}
 	}
 	for parent, replies := range repliesByParent {
 		if index, ok := indexByID[parent]; ok {

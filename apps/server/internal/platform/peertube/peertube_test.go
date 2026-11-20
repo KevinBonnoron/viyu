@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -22,6 +25,24 @@ const (
 	liveUUID    = "11111111-2222-3333-4444-555555555555"
 )
 
+// requestLog records the thread trees a test server was asked for.
+type requestLog struct {
+	mu    sync.Mutex
+	items []string
+}
+
+func (l *requestLog) Add(item string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.items = append(l.items, item)
+}
+
+func (l *requestLog) List() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.items)
+}
+
 // fixture is one instance and the Sepia index in a single local server. It listens on a loopback address,
 // which the production client refuses, so the platform gets the test server's own client.
 type fixture struct {
@@ -30,6 +51,7 @@ type fixture struct {
 	requests atomic.Int32
 	hls      atomic.Bool
 	live     atomic.Bool
+	threads  requestLog
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -81,10 +103,26 @@ func newFixture(t *testing.T) *fixture {
 	}))
 	mux.HandleFunc("GET /api/v1/videos/{uuid}/comment-threads", count(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]any{"total": 3, "data": []any{
-			map[string]any{"id": 7, "text": "<p>Hello <b>there</b></p><p>second &amp; last</p>", "createdAt": "2026-10-08T10:00:00.000Z", "account": map[string]any{"name": "ann", "displayName": "Ann"}},
-			map[string]any{"id": 8, "text": "<p>gone</p>", "createdAt": "2026-10-08T11:00:00.000Z", "isDeleted": true, "account": map[string]any{"name": "bob"}},
-			map[string]any{"id": 9, "text": "<p>plain</p>", "createdAt": "2026-10-08T12:00:00.000Z", "account": map[string]any{"name": "cat"}},
+			map[string]any{"id": 7, "text": "<p>Hello <b>there</b></p><p>second &amp; last</p>", "createdAt": "2026-10-08T10:00:00.000Z", "totalReplies": 4, "account": map[string]any{"name": "ann", "displayName": "Ann"}},
+			map[string]any{"id": 8, "text": "<p>gone</p>", "createdAt": "2026-10-08T11:00:00.000Z", "isDeleted": true, "totalReplies": 1, "account": map[string]any{"name": "bob"}},
+			map[string]any{"id": 9, "text": "<p>plain</p>", "createdAt": "2026-10-08T12:00:00.000Z", "totalReplies": 0, "account": map[string]any{"name": "cat"}},
 		}})
+	}))
+	mux.HandleFunc("GET /api/v1/videos/{uuid}/comment-threads/{thread}", count(func(w http.ResponseWriter, r *http.Request) {
+		f.threads.Add(r.PathValue("thread") + "?" + r.URL.RawQuery)
+		if r.PathValue("thread") != "7" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		node := func(id int, text, author string, deleted bool, children ...any) map[string]any {
+			return map[string]any{"comment": map[string]any{"id": id, "text": text, "createdAt": "2026-10-08T10:30:00.000Z", "isDeleted": deleted, "account": map[string]any{"name": author}}, "children": children}
+		}
+		reply(w, node(7, "<p>Hello</p>", "ann",
+			false,
+			node(20, "<p>first <i>reply</i></p>", "bob", false,
+				node(21, "", "cat", true, node(22, "<p>grandchild</p>", "dan", false))),
+			node(23, "<p>second reply</p>", "eve", false),
+		))
 	}))
 	mux.HandleFunc("GET /api/v1/video-channels/{handle}", count(func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]any{"name": testChannel, "displayName": "Studio", "host": f.host, "followersCount": 40, "description": "About the studio",
@@ -321,10 +359,102 @@ func TestVideoMetadataCommentsAndPlayback(t *testing.T) {
 	if comments[1].Author != "cat" {
 		t.Fatalf("a deleted comment must not appear: %+v", comments)
 	}
+	if got := f.threads.List(); len(got) != 1 || !strings.HasPrefix(got[0], "7?") {
+		t.Fatalf("only the live thread with replies is read: %v", got)
+	}
+	replies := comments[0].Replies
+	if len(replies) != 3 || replies[0].ID != "20" || replies[0].Author != "bob" || replies[0].Text != "first reply" || replies[0].PublishedAt != "2026-10-08T10:30:00Z" || replies[1].ID != "22" || replies[2].ID != "23" {
+		t.Fatalf("replies are flat, in conversation order, without the deleted one but with its answer: %+v", replies)
+	}
+	for _, reply := range replies {
+		if len(reply.Replies) != 0 {
+			t.Fatalf("replies stay one level deep: %+v", reply)
+		}
+	}
+	if len(comments[1].Replies) != 0 {
+		t.Fatalf("a thread without replies carries none: %+v", comments[1])
+	}
 
 	manifest, err := f.PlaybackManifest(ctx, id, "")
 	if err != nil || manifest.URL != "http://"+f.host+"/hls/master.m3u8" {
 		t.Fatalf("manifest: %+v %v", manifest, err)
+	}
+}
+
+// repliesServer lists threads 1..n: thread 1 is deleted, the others have eight replies each, ids thread*100+k.
+func repliesServer(t *testing.T, threads int, tree http.HandlerFunc) (*Platform, string, *requestLog) {
+	t.Helper()
+	asked := &requestLog{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/videos/{uuid}/comment-threads", func(w http.ResponseWriter, r *http.Request) {
+		data := make([]any, 0, threads)
+		for id := 1; id <= threads; id++ {
+			data = append(data, map[string]any{"id": id, "text": "<p>thread</p>", "createdAt": "2026-10-08T10:00:00.000Z", "isDeleted": id == 1, "totalReplies": 8, "account": map[string]any{"name": "ann"}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total": threads, "data": data})
+	})
+	mux.HandleFunc("GET /api/v1/videos/{uuid}/comment-threads/{thread}", func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(r.PathValue("thread"))
+		tree(w, r)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host := strings.TrimPrefix(server.URL, "http://")
+	return New(Options{HTTP: server.Client(), Scheme: "http", Instances: []string{host}}), host + ":" + testUUID, asked
+}
+
+func TestCommentRepliesAreBoundedPerThreadAndInTotal(t *testing.T) {
+	t.Parallel()
+	p, id, asked := repliesServer(t, 15, func(w http.ResponseWriter, r *http.Request) {
+		thread, _ := strconv.Atoi(r.PathValue("thread"))
+		children := make([]any, 0, 8)
+		for k := range 8 {
+			children = append(children, map[string]any{"comment": map[string]any{"id": thread*100 + k, "text": "<p>reply</p>", "createdAt": "2026-10-08T10:30:00.000Z", "account": map[string]any{"name": "bob"}}, "children": []any{}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"comment": map[string]any{"id": thread}, "children": children})
+	})
+	comments, err := p.Comments(context.Background(), id, "")
+	if err != nil || len(comments) != 14 {
+		t.Fatalf("comments: %d %v", len(comments), err)
+	}
+	if got := asked.List(); len(got) != replyThreadLimit || got[0] != "2" || got[replyThreadLimit-1] != "11" {
+		t.Fatalf("a deleted thread is not asked for and at most %d trees are read: %v", replyThreadLimit, got)
+	}
+	for index, comment := range comments {
+		thread := index + 2
+		if index >= replyThreadLimit {
+			if len(comment.Replies) != 0 {
+				t.Fatalf("thread %d is past the request bound: %+v", thread, comment.Replies)
+			}
+			continue
+		}
+		if len(comment.Replies) != repliesPerThread {
+			t.Fatalf("thread %d keeps %d replies: %+v", thread, len(comment.Replies), comment.Replies)
+		}
+		for k, reply := range comment.Replies {
+			if reply.ID != strconv.Itoa(thread*100+k) || reply.Author != "bob" || reply.Text != "reply" || len(reply.Replies) != 0 {
+				t.Fatalf("thread %d reply %d: %+v", thread, k, reply)
+			}
+		}
+	}
+}
+
+func TestCommentReplyFailuresAreReported(t *testing.T) {
+	t.Parallel()
+	p, id, _ := repliesServer(t, 3, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "secret internal detail", http.StatusInternalServerError)
+	})
+	_, err := p.Comments(context.Background(), id, "")
+	apiError(t, err, http.StatusBadGateway, apierr.CodeRequestFailed)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p, id, _ = repliesServer(t, 3, func(w http.ResponseWriter, r *http.Request) {
+		cancel()
+		<-r.Context().Done()
+	})
+	if _, err := p.Comments(ctx, id, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled reply request returns the cancellation: %v", err)
 	}
 }
 
