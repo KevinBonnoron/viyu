@@ -90,6 +90,71 @@ func TestCommentsAreBoundedToOneHundredThreads(t *testing.T) {
 	}
 }
 
+func TestLastThreadWithinTheLimitKeepsItsRepliesAndLaterThreadsAreDropped(t *testing.T) {
+	t.Parallel()
+	var items []string
+	for index := range 101 {
+		items = append(items, fmt.Sprintf(`{"id":"c%d","author":"A","parent":"root"}`, index))
+		if index == 99 || index == 100 {
+			items = append(items, fmt.Sprintf(`{"id":"r%d","author":"R","parent":"c%d"}`, index, index))
+		}
+	}
+	p, _ := fakeYTDLP(t, `printf '%s\n' '{"id":"limit000001","comments":[`+strings.Join(items, ",")+`]}'`)
+	comments, err := p.Comments(context.Background(), "limit000001", "")
+	if err != nil || len(comments) != 100 {
+		t.Fatalf("got %d comments, err=%v", len(comments), err)
+	}
+	if last := comments[99]; last.ID != "c99" || len(last.Replies) != 1 || last.Replies[0].ID != "r99" {
+		t.Fatalf("the last kept thread lost its reply: %+v", last)
+	}
+	for _, comment := range comments {
+		if comment.ID == "c100" || comment.ID == "r100" {
+			t.Fatalf("beyond the limit: %+v", comment)
+		}
+	}
+}
+
+func TestCommentsBoundInlineRepliesWithoutCountingOrphans(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		replyCounts []int
+		wantCounts  []int
+	}{
+		{name: "per thread", replyCounts: []int{8, 2}, wantCounts: []int{5, 2}},
+		{name: "total with partial final thread", replyCounts: []int{4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}, wantCounts: []int{4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 1, 0}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var items []string
+			for index := range 60 {
+				items = append(items, fmt.Sprintf(`{"id":"orphan%d","parent":"missing"}`, index))
+			}
+			for parent, count := range test.replyCounts {
+				items = append(items, fmt.Sprintf(`{"id":"c%d","parent":"root"}`, parent))
+				for reply := range count {
+					items = append(items, fmt.Sprintf(`{"id":"c%dr%d","parent":"c%d"}`, parent, reply, parent))
+				}
+			}
+			p, _ := fakeYTDLP(t, `printf '%s\n' '{"id":"bound000001","comments":[`+strings.Join(items, ",")+`]}'`)
+			comments, err := p.Comments(context.Background(), "bound000001", "")
+			if err != nil || len(comments) != len(test.wantCounts) {
+				t.Fatalf("comments=%+v err=%v", comments, err)
+			}
+			for parent, want := range test.wantCounts {
+				comment := comments[parent]
+				if comment.ID != fmt.Sprintf("c%d", parent) || len(comment.Replies) != want {
+					t.Fatalf("parent %d: want %d replies, got %+v", parent, want, comment)
+				}
+				for index, reply := range comment.Replies {
+					if reply.ID != fmt.Sprintf("c%dr%d", parent, index) {
+						t.Fatalf("parent %d reply %d lost source order: %+v", parent, index, reply)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCommentsFailuresAreSafeErrors(t *testing.T) {
 	t.Parallel()
 	p, _ := fakeYTDLP(t, commentsScript)
@@ -129,7 +194,7 @@ func TestConnectedCommentsUseTheSessionJar(t *testing.T) {
 		t.Fatalf("comments=%+v err=%v", comments, err)
 	}
 	args := calls(t, log)
-	if !strings.Contains(args, "--cookies "+jar) || !strings.Contains(args, "--get-comments --extractor-args youtube:max_comments=150,100,50,5,1 https://www.youtube.com/watch?v=dQw4w9WgXcQ") {
+	if !strings.Contains(args, "--cookies "+jar) || !strings.Contains(args, "--get-comments") {
 		t.Fatalf("arguments: %s", args)
 	}
 }

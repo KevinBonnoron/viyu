@@ -11,13 +11,14 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/ytdlp"
 )
 
-// yt-dlp exposes a bounded comment extraction, not a resumable cursor. The tuple is max_comments,
-// max_parents, max_replies, max_replies_per_thread, max_depth: 100 parent comments with up to 50 replies
-// between them (5 per thread) — fetching every answer thread would need a request per thread, which a
-// whole comment list cannot afford.
+// yt-dlp's max_comments tuple is total, parents, replies, replies per thread, depth.
+// The list starts at depth 1 and reply threads at depth 2: depth 1 silently excludes replies.
+// Keep at most 100 parents and 50 replies (5 per thread), since each reply thread costs another request.
 const (
-	commentArgs   = "150,100,50,5,1"
-	commentsLimit = 100
+	commentArgs      = "150,100,50,5,2"
+	commentsLimit    = 100
+	repliesLimit     = 50
+	repliesPerThread = 5
 )
 
 // Comments lists the top-level comments of a video with the replies yt-dlp fetched, nested under their
@@ -54,11 +55,19 @@ func (p *Platform) Comments(ctx context.Context, id, cookieFile string) ([]platf
 		return nil, fail(ctx, err, cookieFile != "")
 	}
 	comments := make([]platform.Comment, 0, min(len(data.Comments), commentsLimit))
-	indexByID := make(map[string]int, len(data.Comments))
 	repliesByParent := make(map[string][]platform.Comment)
 	for _, item := range data.Comments {
 		if item.ID == "" {
 			return nil, apierr.RequestFailed().WithCause(errors.New("comment without an id"))
+		}
+		isReply := item.Parent != "" && item.Parent != "root"
+		if isReply {
+			if len(repliesByParent[item.Parent]) >= repliesPerThread {
+				continue
+			}
+		} else if len(comments) == commentsLimit {
+			// Keep reading replies to the last included parent, even after reaching the parent limit.
+			continue
 		}
 		comment := platform.Comment{ID: item.ID, Author: item.Author, Text: item.Text}
 		if item.Timestamp != nil && *item.Timestamp > 0 {
@@ -67,20 +76,22 @@ func (p *Platform) Comments(ctx context.Context, id, cookieFile string) ([]platf
 		if item.LikeCount != nil && *item.LikeCount > 0 {
 			comment.LikeCount = *item.LikeCount
 		}
-		if item.Parent != "" && item.Parent != "root" {
+		if isReply {
 			repliesByParent[item.Parent] = append(repliesByParent[item.Parent], comment)
 			continue
 		}
-		indexByID[item.ID] = len(comments)
 		comments = append(comments, comment)
-		if len(comments) == commentsLimit {
+	}
+	// Inline yt-dlp replies bypass its limits. Apply the global cap in parent order, excluding orphans.
+	remaining := repliesLimit
+	for index := range comments {
+		if remaining == 0 {
 			break
 		}
-	}
-	for parent, replies := range repliesByParent {
-		if index, ok := indexByID[parent]; ok {
-			comments[index].Replies = replies
-		}
+		replies := repliesByParent[comments[index].ID]
+		replies = replies[:min(len(replies), remaining)]
+		comments[index].Replies = replies
+		remaining -= len(replies)
 	}
 	return comments, nil
 }
