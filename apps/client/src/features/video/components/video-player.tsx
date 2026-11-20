@@ -17,6 +17,7 @@ import { VideoRecommendations } from '@/features/video/components/video-recommen
 import { ShareDialog } from '@/features/video/components/video-share-dialog';
 import { useAutoplay } from '@/features/video/hooks/use-autoplay';
 import { useHlsPlayback } from '@/features/video/hooks/use-hls-playback';
+import { useKeepAwake } from '@/features/video/hooks/use-keep-awake';
 import { usePlaybackCheckpoint } from '@/features/video/hooks/use-playback-checkpoint';
 import { usePlayerFullscreen } from '@/features/video/hooks/use-player-fullscreen';
 import { usePlayerLayout, useSidePanelPlacement } from '@/features/video/hooks/use-player-layout';
@@ -168,6 +169,7 @@ function VideoPlayer({
   const playerFullscreen = usePlayerFullscreen(frameRef, videoRef);
   const { fullscreen, immersive } = playerFullscreen;
   const playerMaxHeight = usePlayerLayout(frameRef, informationRef, fullscreen, [videoMeta, source, canMarkWatched, privatePlayback]);
+  useKeepAwake(videoRef, streamVersion);
 
   const sponsorSegments = useSponsorSegments(videoMeta?.platform === 'youtube' ? nativeId : undefined);
   const channelProfile = useChannelProfile(videoMeta?.channelId || null);
