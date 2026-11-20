@@ -1,6 +1,6 @@
 import { createFileRoute, redirect, useLocation } from '@tanstack/react-router';
 import { Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorSnackbar } from '@/components/error-snackbar';
 import { PageTitle } from '@/components/page-title';
@@ -53,6 +53,16 @@ function SearchPage() {
   const openLink = useOpenLink();
   const [linkError, setLinkError] = useState<TranslationKey | null>(null);
   const qLink = directLink(q);
+  const qLinkPlatform = qLink?.platform;
+  const linkAttempt = useRef<AbortController | null>(null);
+  // Cancellation and automatic opening share a lifetime; filter-only history state changes do not end it.
+  useLayoutEffect(
+    () => () => {
+      linkAttempt.current?.abort();
+      linkAttempt.current = null;
+    },
+    [q, qLinkPlatform, source, openLink],
+  );
   const searchInput = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(q ?? '');
   const [retry, setRetry] = useState(0);
@@ -69,23 +79,21 @@ function SearchPage() {
     own.current = undefined;
     setQuery(q ?? '');
   }, [q]);
-  const qLinkPlatform = qLink?.platform;
-  useAbortableEffect(
-    async (signal) => {
-      if (!q || !qLinkPlatform) {
-        return;
+  useAbortableEffect(() => {
+    if (!q || !qLinkPlatform || (linkAttempt.current && !linkAttempt.current.signal.aborted)) {
+      return;
+    }
+    const controller = new AbortController();
+    linkAttempt.current = controller;
+    setLinkError(null);
+    // The address opens the link by itself: going back must skip it.
+    void openLink(q, { source: source === qLinkPlatform ? source : undefined, signal: controller.signal, replace: true }).catch((failure: unknown) => {
+      if (!controller.signal.aborted) {
+        setLinkError(requestError(failure));
       }
-      setLinkError(null);
-      try {
-        await openLink(q, { source: source === qLinkPlatform ? source : undefined, signal });
-      } catch (failure: unknown) {
-        if (!signal.aborted) {
-          setLinkError(requestError(failure));
-        }
-      }
-    },
-    [q, qLinkPlatform, source, openLink],
-  );
+    });
+    return () => controller.abort();
+  }, [q, qLinkPlatform, source, openLink]);
   // Typing alone searches after a pause. It replaces the history entry so keystrokes do not stack up
   // (only Enter pushes one) and never opens a pasted video link; that needs explicit validation.
   useTypedSearchSettle(query, (value) => {
@@ -101,7 +109,10 @@ function SearchPage() {
         source={source}
         capability="search"
         localLabel={t('search.allTab')}
-        onChange={(selected, selectedPlatform) => void navigate({ search: { q }, state: { viyuSource: selected, viyuSearchPlatform: selectedPlatform } })}
+        // An address holding a pasted link opens it by itself: it is replaced, never stacked, so going back skips it.
+        onChange={(selected, selectedPlatform) =>
+          void navigate({ search: { q }, state: { viyuSource: selected, viyuSearchPlatform: selectedPlatform }, replace: !!qLink })
+        }
       />
       <form
         onSubmit={(event) => {
@@ -110,10 +121,21 @@ function SearchPage() {
           if (!value) {
             return;
           }
+          linkAttempt.current?.abort();
+          linkAttempt.current = null;
           const link = directLink(value);
           if (link) {
+            const controller = new AbortController();
+            linkAttempt.current = controller;
             setLinkError(null);
-            openLink(value, { source: source === link.platform ? source : undefined }).catch((failure: unknown) => setLinkError(requestError(failure)));
+            // Any address that opens a link by itself must be replaced, even when submitting a different link.
+            void openLink(value, { source: source === link.platform ? source : undefined, signal: controller.signal, replace: !!qLink }).catch(
+              (failure: unknown) => {
+                if (!controller.signal.aborted) {
+                  setLinkError(requestError(failure));
+                }
+              },
+            );
           } else if (value === q) {
             setRetry((previous) => previous + 1);
           } else {

@@ -50,26 +50,27 @@ export function useOpenVideo() {
 /**
  * Opens a pasted external link: a video on its player, a channel on its page. For a video the server only stores its
  * identity, so the player opens at once and reads the details itself; a video the server already knows comes with its
- * details, which the player reuses.
+ * details, which the player reuses. `replace` takes the place of the current history entry: an address that opens a
+ * link by itself must not be returned to, or going back would open the link again.
  */
 export function useOpenLink() {
   const openVideo = useOpenVideo();
   const openChannel = useOpenChannel();
   return useCallback(
-    async (url: string, options: { source?: string; signal?: AbortSignal } = {}) => {
+    async (url: string, options: { source?: string; signal?: AbortSignal; replace?: boolean } = {}) => {
       const { video, channel } = await api.resolveLink(url, { signal: options.signal });
       if (options.signal?.aborted) {
         return;
       }
       if (channel) {
-        await openChannel({ ...channel, source: options.source });
+        await openChannel({ ...channel, source: options.source }, { replace: options.replace });
         return;
       }
       if (video) {
         if (video.title) {
           seedVideoMeta(video);
         }
-        await openVideo(video, { source: options.source });
+        await openVideo(video, { source: options.source, replace: options.replace });
       }
     },
     [openVideo, openChannel],

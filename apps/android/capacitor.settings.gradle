@@ -2,6 +2,9 @@
 include ':capacitor-android'
 project(':capacitor-android').projectDir = new File('../client/node_modules/@capacitor/android/capacitor')
 
+include ':capacitor-community-keep-awake'
+project(':capacitor-community-keep-awake').projectDir = new File('../client/node_modules/@capacitor-community/keep-awake/android')
+
 include ':capacitor-preferences'
 project(':capacitor-preferences').projectDir = new File('../client/node_modules/@capacitor/preferences/android')
 
