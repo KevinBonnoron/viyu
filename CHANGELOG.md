@@ -14,6 +14,7 @@
 * Fetch YouTube and PeerTube comment replies, retaining replies to the last included YouTube thread and bounding PeerTube reply requests.
 * Collapse long comments and replies to four lines with show-more/show-less controls, while keeping short messages at their natural height.
 * Refine comment metadata and reply threads with singular/plural labels, a stable text-and-chevron toggle, a subtly tinted reply group and no mobile indent.
+* Align quick-search tab labels and their keyboard shortcuts on the same text baseline.
 
 ## [0.1.0](https://github.com/KevinBonnoron/viyu/compare/v0.0.1...v0.1.0) (2026-11-15)
 
