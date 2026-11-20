@@ -332,7 +332,7 @@ jobs:
       - name: Install GTK4 and WebKitGTK
         if: matrix.target == 'linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           # The workspace sets the Go version every module builds with.
           go-version-file: go.work
