@@ -38,6 +38,14 @@ const (
 
 	jsonLimit    = 8 << 20
 	commentLimit = 100
+	// Replies are bounded as on YouTube: the thread trees of at most replyThreadLimit threads are read, one
+	// request each, and every thread keeps repliesPerThread replies, 50 at most in all. A tree is asked
+	// down to replyDepth levels (a reply to a reply is flattened under its thread) and replyWidth replies
+	// per comment, so the instance walks a few dozen comments per thread.
+	replyThreadLimit = 10
+	repliesPerThread = 5
+	replyDepth       = 2
+	replyWidth       = 5
 	// channelsPerPage is how many channels a page of results carries next to its videos.
 	channelsPerPage = 5
 )
@@ -566,39 +574,91 @@ func (p *Platform) EndLive(channelID string) platform.LiveEnd {
 
 func (p *Platform) CommentsMode() string { return platform.CommentsList }
 
+// Comments lists the newest threads of a video. The replies of the first threads that have some are read
+// from their thread tree and flattened under the thread, in conversation order.
 func (p *Platform) Comments(ctx context.Context, videoID, _ string) ([]platform.Comment, error) {
 	host, uuid, ok := splitVideo(videoID)
 	if !ok || !p.allowed(host) {
 		return nil, apierr.InvalidInput("Provide a video of a supported PeerTube instance.")
 	}
 	var threads struct {
-		Data []struct {
-			ID        float64 `json:"id"`
-			Text      string  `json:"text"`
-			CreatedAt string  `json:"createdAt"`
-			IsDeleted bool    `json:"isDeleted"`
-			Account   struct {
-				Name        string `json:"name"`
-				DisplayName string `json:"displayName"`
-			} `json:"account"`
-		} `json:"data"`
+		Data []commentEntry `json:"data"`
 	}
 	query := url.Values{"count": {strconv.Itoa(commentLimit)}, "sort": {"-createdAt"}}
 	if err := p.get(ctx, p.videoURL(host, uuid)+"/comment-threads?"+query.Encode(), &threads); err != nil {
 		return nil, err
 	}
 	comments := make([]platform.Comment, 0, len(threads.Data))
+	fetched := 0
 	for _, thread := range threads.Data {
 		if thread.IsDeleted {
 			continue
 		}
-		comment := platform.Comment{ID: strconv.FormatFloat(thread.ID, 'f', -1, 64), Author: platform.First(thread.Account.DisplayName, thread.Account.Name), Text: plainText(thread.Text)}
-		if created, err := time.Parse(time.RFC3339Nano, thread.CreatedAt); err == nil {
-			comment.PublishedAt = created.UTC().Format(time.RFC3339)
+		comment := thread.comment()
+		if thread.TotalReplies > 0 && fetched < replyThreadLimit {
+			fetched++
+			replies, err := p.replies(ctx, host, uuid, comment.ID)
+			if err != nil {
+				return nil, err
+			}
+			comment.Replies = replies
 		}
 		comments = append(comments, comment)
 	}
 	return comments, nil
+}
+
+// commentEntry is a PeerTube comment: a thread of the listing, or a node of a thread tree.
+type commentEntry struct {
+	ID           float64 `json:"id"`
+	Text         string  `json:"text"`
+	CreatedAt    string  `json:"createdAt"`
+	IsDeleted    bool    `json:"isDeleted"`
+	TotalReplies int     `json:"totalReplies"`
+	Account      struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+	} `json:"account"`
+}
+
+func (c commentEntry) comment() platform.Comment {
+	comment := platform.Comment{ID: strconv.FormatFloat(c.ID, 'f', -1, 64), Author: platform.First(c.Account.DisplayName, c.Account.Name), Text: plainText(c.Text)}
+	if created, err := time.Parse(time.RFC3339Nano, c.CreatedAt); err == nil {
+		comment.PublishedAt = created.UTC().Format(time.RFC3339)
+	}
+	return comment
+}
+
+// commentNode is a comment of a thread tree with the replies the instance included under it.
+type commentNode struct {
+	Comment  commentEntry  `json:"comment"`
+	Children []commentNode `json:"children"`
+}
+
+// replies reads one thread tree, limited to replyDepth levels and replyWidth replies per comment (an
+// instance older than PeerTube 8.3 ignores both and sends the whole tree), and keeps the first
+// repliesPerThread replies in depth-first order. A deleted reply is left out; its own replies stay.
+func (p *Platform) replies(ctx context.Context, host, uuid, threadID string) ([]platform.Comment, error) {
+	var tree commentNode
+	query := url.Values{"maxDepth": {strconv.Itoa(replyDepth)}, "repliesPerLevel": {strconv.Itoa(replyWidth)}}
+	if err := p.get(ctx, p.videoURL(host, uuid)+"/comment-threads/"+url.PathEscape(threadID)+"?"+query.Encode(), &tree); err != nil {
+		return nil, err
+	}
+	var replies []platform.Comment
+	var walk func(nodes []commentNode)
+	walk = func(nodes []commentNode) {
+		for _, node := range nodes {
+			if len(replies) == repliesPerThread {
+				return
+			}
+			if !node.Comment.IsDeleted {
+				replies = append(replies, node.Comment.comment())
+			}
+			walk(node.Children)
+		}
+	}
+	walk(tree.Children)
+	return replies, nil
 }
 
 // plainText turns the HTML of a comment into plain text: paragraphs and line breaks become newlines,

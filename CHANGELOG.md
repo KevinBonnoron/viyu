@@ -11,6 +11,8 @@
 * Show a retryable error when display preferences fail to load instead of leaving video grids on permanent skeletons.
 * Continue empty-feed pagination after a status-query error only when known filters exclude every candidate; keep pending or unchecked videos withheld.
 * Reset active seek gestures when the end screen appears so replay remains seekable even without pointer-capture cleanup.
+* Fetch YouTube and PeerTube comment replies, retaining replies to the last included YouTube thread and bounding PeerTube reply requests.
+* Enforce YouTube reply limits after extraction as well, so inline replies cannot exceed five per thread or fifty in total; orphan replies do not consume the budget.
 
 ## [0.1.0](https://github.com/KevinBonnoron/viyu/compare/v0.0.1...v0.1.0) (2026-11-15)
 
