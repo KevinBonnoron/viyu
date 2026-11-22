@@ -10,13 +10,15 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
 )
 
-// yt-dlp lists a Twitch channel's VODs but not its avatar, name or followers, nor the VODs' dates,
-// durations or view counts; Twitch's public GraphQL API supplies them, in a single request.
+// yt-dlp lists a Twitch channel's VODs but not its avatar, name, followers or creation date, nor the VODs'
+// dates, durations or view counts; Twitch's public GraphQL API supplies them, in a single request. The
+// profile's view count is no longer reported (null), so only the VOD total is read.
 const profileQuery = `query ViyuChannel($login: String!, $first: Int!, $withVideos: Boolean!) {
   user(login: $login) {
-    login displayName description
+    login displayName description createdAt
     profileImageURL(width: 150)
     followers { totalCount }
+    videoTotal: videos(first: 1) { totalCount }
     videos(first: $first, sort: TIME) @include(if: $withVideos) {
       edges { node { id title createdAt lengthSeconds viewCount previewThumbnailURL(width: 640, height: 360) } }
     }
@@ -59,9 +61,13 @@ func (p *Platform) profileWithVideos(ctx context.Context, login string, videos i
 				DisplayName     string `json:"displayName"`
 				Description     string `json:"description"`
 				ProfileImageURL string `json:"profileImageURL"`
+				CreatedAt       string `json:"createdAt"`
 				Followers       *struct {
 					TotalCount float64 `json:"totalCount"`
 				} `json:"followers"`
+				VideoTotal *struct {
+					TotalCount *float64 `json:"totalCount"`
+				} `json:"videoTotal"`
 				Videos *struct {
 					Edges []struct {
 						Node *searchVideo `json:"node"`
@@ -79,9 +85,12 @@ func (p *Platform) profileWithVideos(ctx context.Context, login string, videos i
 		return platform.Channel{}, nil, apierr.RequestFailed().WithCause(errUnexpectedAnswer)
 	}
 	user := response.Data.User
-	profile := platform.Channel{ID: user.Login, Platform: ID, Name: platform.First(user.DisplayName, user.Login), Thumbnail: user.ProfileImageURL, Description: user.Description}
+	profile := platform.Channel{ID: user.Login, Platform: ID, Name: platform.First(user.DisplayName, user.Login), Thumbnail: user.ProfileImageURL, Description: user.Description, CreatedAt: publication(user.CreatedAt)}
 	if user.Followers != nil {
 		profile.SubscriberCount = user.Followers.TotalCount
+	}
+	if user.VideoTotal != nil {
+		profile.VideoCount = user.VideoTotal.TotalCount
 	}
 	var vods []searchVideo
 	if user.Videos != nil {
@@ -109,6 +118,10 @@ func (p *Platform) completeChannel(ctx context.Context, info *platform.Channel, 
 	info.Description = platform.First(info.Description, profile.Description)
 	if info.SubscriberCount == 0 {
 		info.SubscriberCount = profile.SubscriberCount
+	}
+	info.CreatedAt = platform.First(info.CreatedAt, profile.CreatedAt)
+	if info.VideoCount == nil {
+		info.VideoCount = profile.VideoCount
 	}
 	byID := make(map[string]searchVideo, len(vods))
 	for _, vod := range vods {

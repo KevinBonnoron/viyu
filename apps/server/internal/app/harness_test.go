@@ -35,7 +35,7 @@ func offlineOptions(dir string) Options {
 	return Options{
 		DataDir:                dir,
 		DisableChannelProfiles: true,
-		YouTube:                youtube.Options{FeedURL: offline + "/feed"},
+		YouTube:                youtube.Options{FeedURL: offline + "/feed", AboutURL: offline},
 		Twitch: twitch.Options{
 			ValidateURL: offline + "/validate", APIURL: offline + "/helix", GraphQLURL: offline + "/graphql",
 			IRCDial: func(context.Context) (net.Conn, error) { return nil, errors.New("offline") },

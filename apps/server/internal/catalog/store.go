@@ -39,8 +39,8 @@ const (
 
 // Options tunes a Store.
 type Options struct {
-	// OnProfilesWanted is called, without blocking, after a write that leaves channels without avatar or
-	// subscriber count, so a worker can fill them in.
+	// OnProfilesWanted is called, without blocking, after a write that leaves channels without avatar,
+	// subscriber count or stored profile, so a worker can fill them in.
 	OnProfilesWanted func()
 	// OnPublicationsWanted is called, without blocking, after a write that leaves videos without a
 	// publication date, so a worker can look them up.

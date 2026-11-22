@@ -70,15 +70,26 @@ func (s *Server) channel(e *core.RequestEvent) error {
 		}
 		return s.respond(e, http.StatusOK, channelPage{Channel: &info, Videos: storedVideos(videos)})
 	}
+	var cached *channelPage
 	if record.GetDateTime("expires_at").Time().After(time.Now()) {
 		if info := catalog.ChannelOf(record); info != nil {
 			if videos, err := s.Store.CachedChannelVideos(record.Id, viewerID(e)); err == nil && len(videos) > 0 {
-				return s.respond(e, http.StatusOK, channelPage{Channel: info, Videos: videos})
+				cached = &channelPage{Channel: info, Videos: videos}
 			}
 		}
 	}
+	// A usable cached page is the answer once the channel's profile was fetched; before that (a channel
+	// stored without its metadata) the profile is fetched first, but a failing lookup must not turn a page
+	// that was good into an error: the stored page answers and the profile backfill tries again.
+	if cached != nil && catalog.ProfileSynced(record) {
+		return s.respond(e, http.StatusOK, *cached)
+	}
 	info, videos, err := s.Refresher.Channel(ctx, platformID, nativeID)
 	if err != nil {
+		if cached != nil {
+			logging.Of(s.App).Warn("Failed to fetch channel profile, serving the cached page", "id", nativeID, "platform", platformID, "error", err)
+			return s.respond(e, http.StatusOK, *cached)
+		}
 		return err
 	}
 	return s.respond(e, http.StatusOK, channelPage{Channel: &info, Videos: storedVideos(videos)})

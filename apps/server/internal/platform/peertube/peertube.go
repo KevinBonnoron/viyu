@@ -252,6 +252,7 @@ type channel struct {
 	Host           string   `json:"host"`
 	Description    *string  `json:"description"`
 	FollowersCount float64  `json:"followersCount"`
+	CreatedAt      string   `json:"createdAt"`
 	Avatars        []avatar `json:"avatars"`
 }
 
@@ -465,17 +466,20 @@ func (p *Platform) ChannelListing(ctx context.Context, id string, limit int, _ s
 		return platform.Channel{}, nil, err
 	}
 	base := p.base(host)
-	info := platform.Channel{ID: name + "@" + host, Platform: platformID, Name: platform.First(profile.DisplayName, profile.Name), Thumbnail: avatarURL(base, profile.Avatars), SubscriberCount: profile.FollowersCount}
+	info := platform.Channel{ID: name + "@" + host, Platform: platformID, Name: platform.First(profile.DisplayName, profile.Name), Thumbnail: avatarURL(base, profile.Avatars), SubscriberCount: profile.FollowersCount, CreatedAt: creation(profile.CreatedAt)}
 	if profile.Description != nil {
 		info.Description = *profile.Description
 	}
+	// Total is the instance's own count of the channel's listed videos, not the size of this page.
 	var listing struct {
-		Data []video `json:"data"`
+		Total *float64 `json:"total"`
+		Data  []video  `json:"data"`
 	}
 	query := url.Values{"start": {"0"}, "count": {strconv.Itoa(min(limit, 100))}, "sort": {"-publishedAt"}}
 	if err := p.get(ctx, p.channelURL(name, host)+"/videos?"+query.Encode(), &listing); err != nil {
 		return platform.Channel{}, nil, err
 	}
+	info.VideoCount = listing.Total
 	videos := make([]platform.Video, 0, len(listing.Data))
 	for _, item := range listing.Data {
 		if item.UUID == "" {
@@ -489,6 +493,14 @@ func (p *Platform) ChannelListing(ctx context.Context, id string, limit int, _ s
 		videos = append(videos, listed)
 	}
 	return info, videos, nil
+}
+
+// creation is the instant a channel was created, from the instance's timestamp; a malformed one is unknown.
+func creation(createdAt string) string {
+	if created, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+		return created.UTC().Format(time.RFC3339)
+	}
+	return ""
 }
 
 func (p *Platform) Search(ctx context.Context, _ platform.Session, query string, page int) (platform.SearchPage, error) {

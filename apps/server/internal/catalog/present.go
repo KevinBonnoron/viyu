@@ -204,5 +204,7 @@ func ChannelOf(r *core.Record) *platform.Channel {
 	if r.GetString("name") == "" {
 		return nil
 	}
-	return &platform.Channel{RecordID: r.Id, ID: r.GetString("platform_id"), Platform: r.GetString("platform"), Name: r.GetString("name"), Thumbnail: platform.ChannelImageURL(r.GetString("thumbnail")), Description: r.GetString("description"), SubscriberCount: r.GetFloat("subscriber_count")}
+	c := &platform.Channel{RecordID: r.Id, ID: r.GetString("platform_id"), Platform: r.GetString("platform"), Name: r.GetString("name"), Thumbnail: platform.ChannelImageURL(r.GetString("thumbnail")), Description: r.GetString("description"), SubscriberCount: r.GetFloat("subscriber_count")}
+	fillProfileDetails(c, r)
+	return c
 }

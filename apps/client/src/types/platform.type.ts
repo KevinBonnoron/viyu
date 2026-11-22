@@ -69,6 +69,11 @@ export interface ChannelInfo {
   thumbnail: string;
   description: string;
   subscriberCount: number;
+  /** The provider's channel creation date, never the local record's creation date. */
+  createdAt?: string;
+  country?: string;
+  videoCount?: number;
+  viewCount?: number;
 }
 
 /** Whether a channel is broadcasting now; `recordId` is the `videos` record of the stream, which is what the player opens. */

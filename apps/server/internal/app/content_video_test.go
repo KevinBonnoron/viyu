@@ -66,6 +66,92 @@ func TestVideoAndChannelAreFetchedOnceAndThenServedFromTheStore(t *testing.T) {
 	}
 }
 
+// A channel stored before its profile was ever fetched is refreshed by the first page view even though its
+// listing is still fresh; once the profile is stored the page is served from the store again.
+func TestChannelPageFetchesTheProfileOnceBeforeServingTheStore(t *testing.T) {
+	t.Parallel()
+	option, calls := contentDownloader(t, fixtureDownloaderBody)
+	app, handler := newApp(t, option)
+	contentDecode[contentPage](t, request(t, handler, "/api/search?q=fixture", ""))
+	record, err := app.FindFirstRecordByFilter("channels", "platform_id = 'UCfixture'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Set("expires_at", time.Now().Add(time.Hour))
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	if catalog.ProfileSynced(record) {
+		t.Fatal("a search result must not count as a stored profile")
+	}
+	path := "/api/channel/" + record.Id
+	contentDecode[contentListing](t, request(t, handler, path, ""))
+	if calls.count("/channel/UCfixture/videos") != 1 {
+		t.Fatalf("the unsynced channel was served from a cache that never had its profile: %q", calls.all())
+	}
+	contentDecode[contentListing](t, request(t, handler, path, ""))
+	if calls.count("/channel/UCfixture/videos") != 1 {
+		t.Fatalf("the stored profile was fetched again: %q", calls.all())
+	}
+}
+
+// A channel page that was good must stay good when only the profile lookup fails: the stored page answers,
+// and the profile is tried again later. A channel with nothing usable stored still reports the failure.
+func TestChannelPageServesTheStoreWhenOnlyTheProfileLookupFails(t *testing.T) {
+	t.Parallel()
+	down := filepath.Join(t.TempDir(), "down")
+	body := `if [ -e '` + down + `' ]; then case "$*" in *'/channel/UCfixture/videos'*) echo 'ERROR: channel unavailable' >&2; exit 9 ;; esac; fi
+` + fixtureDownloaderBody
+	option, calls := contentDownloader(t, body)
+	app, handler := newApp(t, option)
+	contentDecode[contentPage](t, request(t, handler, "/api/search?q=fixture", ""))
+	record, err := app.FindFirstRecordByFilter("channels", "platform_id = 'UCfixture'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The listing is fresh and its videos are stored, but the profile was never fetched.
+	record.Set("expires_at", time.Now().Add(time.Hour))
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(down, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/channel/" + record.Id
+	page := contentDecode[contentListing](t, request(t, handler, path, ""))
+	failedLookups := calls.count("/channel/UCfixture/videos")
+	if page.Channel.ID != record.Id || len(page.Videos) != 1 || failedLookups == 0 {
+		t.Fatalf("the cached page was not served after a failed profile lookup: %+v (%d lookups)", page, failedLookups)
+	}
+	if stored, err := app.FindRecordById("channels", record.Id); err != nil || catalog.ProfileSynced(stored) {
+		t.Fatalf("a failed lookup must leave the profile unsynced: %v", err)
+	}
+	// Tried again by the next view, which now succeeds and settles the profile.
+	if err := os.Remove(down); err != nil {
+		t.Fatal(err)
+	}
+	contentDecode[contentListing](t, request(t, handler, path, ""))
+	if stored, err := app.FindRecordById("channels", record.Id); err != nil || !catalog.ProfileSynced(stored) || calls.count("/channel/UCfixture/videos") <= failedLookups {
+		t.Fatalf("the profile was not fetched once the platform answered: %v (%d lookups after %d)", err, calls.count("/channel/UCfixture/videos"), failedLookups)
+	}
+
+	// With no usable cached page (an expired listing), the failure is the answer.
+	expired, err := app.FindRecordById("channels", record.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired.Set("expires_at", time.Unix(0, 0))
+	if err := app.Save(expired); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(down, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res := request(t, handler, path, ""); res.Code == http.StatusOK {
+		t.Fatalf("an expired page was served after a failed listing: %s", res.Body)
+	}
+}
+
 func TestUnknownRecordsAreNotFound(t *testing.T) {
 	t.Parallel()
 	option, calls := contentDownloader(t, fixtureDownloaderBody)

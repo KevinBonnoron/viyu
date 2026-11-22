@@ -143,6 +143,11 @@ function Channel({
   // An unresolved YouTube channel is named after its own ID. A Twitch channel's name is routinely its login, so equality says nothing there.
   const named = !!channel?.name && !(channel.platform === 'youtube' && channel.name === nativeId);
   const waitingForChannel = !error && (loading || syncing) && !named;
+  const createdAt = channel?.createdAt ? new Date(channel.createdAt) : null;
+  const createdDate =
+    createdAt && !Number.isNaN(createdAt.getTime())
+      ? createdAt.toLocaleDateString(language, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+      : null;
 
   return (
     <div className="space-y-6">
@@ -198,6 +203,36 @@ function Channel({
                   {t(subscription.subscribed ? 'player.subscribed' : 'player.subscribe')}
                 </Button>
               </div>
+              {channel && (createdDate || channel.country || channel.videoCount != null || channel.viewCount != null) && (
+                <dl className="col-span-full grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4 text-sm sm:flex sm:flex-wrap sm:gap-x-8">
+                  {createdDate && (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">{t('channel.createdAt')}</dt>
+                      <dd className="mt-1 font-medium">
+                        <time dateTime={channel.createdAt}>{createdDate}</time>
+                      </dd>
+                    </div>
+                  )}
+                  {channel.country && (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">{t('channel.country')}</dt>
+                      <dd className="mt-1 break-words font-medium">{channel.country}</dd>
+                    </div>
+                  )}
+                  {channel.videoCount != null && (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">{t('channel.videoCount')}</dt>
+                      <dd className="mt-1 break-words font-medium tabular-nums">{channel.videoCount.toLocaleString(language)}</dd>
+                    </div>
+                  )}
+                  {channel.viewCount != null && (
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">{t('channel.viewCount')}</dt>
+                      <dd className="mt-1 break-words font-medium tabular-nums">{channel.viewCount.toLocaleString(language)}</dd>
+                    </div>
+                  )}
+                </dl>
+              )}
             </div>
           )}
           <div className="space-y-4">

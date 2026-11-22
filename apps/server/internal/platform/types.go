@@ -72,6 +72,15 @@ type Channel struct {
 	Thumbnail       string  `json:"thumbnail"`
 	Description     string  `json:"description"`
 	SubscriberCount float64 `json:"subscriberCount"`
+	// CreatedAt is when the provider says the channel was created or joined, as YYYY-MM-DD or RFC3339;
+	// empty when the provider does not say. It is never the date Viyu stored the channel.
+	CreatedAt string `json:"createdAt,omitempty"`
+	// Country is the country the provider reports for the channel; empty when unknown.
+	Country string `json:"country,omitempty"`
+	// VideoCount and ViewCount are the totals the provider reports for the whole channel; nil when it does
+	// not report them (a zero is a reported zero).
+	VideoCount *float64 `json:"videoCount,omitempty"`
+	ViewCount  *float64 `json:"viewCount,omitempty"`
 	// RecordID is the PocketBase id of the stored channel.
 	RecordID string `json:"recordId,omitempty"`
 }

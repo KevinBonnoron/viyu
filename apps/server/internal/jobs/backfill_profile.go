@@ -13,7 +13,8 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/sources"
 )
 
-// ProfileBackfill fills in the avatar and subscriber count of cached channels whose listing omitted them.
+// ProfileBackfill fills in the profile of cached channels whose listing omitted it: the avatar, the
+// subscriber count, and the channel metadata (a channel with no profile stored yet gets one lookup).
 type ProfileBackfill struct {
 	app       core.App
 	platforms *platform.Registry
@@ -43,12 +44,12 @@ func (b *ProfileBackfill) Run(ctx context.Context) {
 	runBackfill(ctx, b.opts, b.wake, b.pass)
 }
 
-// missing returns cached channels without an avatar or subscriber count that were not attempted
-// recently: subscribed channels first, then the most recently seen.
+// missing returns cached channels without an avatar, a subscriber count or a stored profile that were not
+// attempted recently: subscribed channels first, then the most recently seen.
 func (b *ProfileBackfill) missing(limit int) ([]*core.Record, error) {
 	var candidates []*core.Record
 	err := candidateQuery(b.app, "channels",
-		dbx.NewExp("(thumbnail = '' OR thumbnail IS NULL OR subscriber_count IS NULL OR subscriber_count = 0)"),
+		dbx.NewExp("(thumbnail = '' OR thumbnail IS NULL OR subscriber_count IS NULL OR subscriber_count = 0 OR profile_synced_at = '' OR profile_synced_at IS NULL)"),
 		"id IN (SELECT channel FROM subscriptions)", "updated",
 		platformIDsInUse(b.sources), limit).
 		All(&candidates)

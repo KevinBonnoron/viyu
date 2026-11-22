@@ -24,23 +24,57 @@ func profilePlatform(t *testing.T, body string) *Platform {
 
 func TestChannelProfileSuppliesWhatTheVODListingOmits(t *testing.T) {
 	t.Parallel()
-	p := profilePlatform(t, `{"data":{"user":{"login":"hardos31","displayName":"Hardos31","description":"Streams","profileImageURL":"https://static-cdn.example/hardos31-150x150.png","followers":{"totalCount":1234}}}}`)
+	p := profilePlatform(t, `{"data":{"user":{"login":"hardos31","displayName":"Hardos31","description":"Streams","profileImageURL":"https://static-cdn.example/hardos31-150x150.png","createdAt":"2012-11-03T15:50:32.87847Z","followers":{"totalCount":1234},"videoTotal":{"totalCount":1621}}}}`)
 	profile, err := p.channelProfile(context.Background(), "hardos31")
 	if err != nil || profile.ID != "hardos31" || profile.Name != "Hardos31" || profile.Thumbnail != "https://static-cdn.example/hardos31-150x150.png" || profile.SubscriberCount != 1234 || profile.Platform != ID {
 		t.Fatalf("profile: %+v %v", profile, err)
 	}
+	if profile.CreatedAt != "2012-11-03T15:50:32.87847Z" || profile.VideoCount == nil || *profile.VideoCount != 1621 || profile.ViewCount != nil || profile.Country != "" {
+		t.Fatalf("profile metadata: %+v", profile)
+	}
 
 	listing := platform.Channel{ID: "hardos31", Platform: ID, Name: "hardos31"}
 	p.completeChannel(context.Background(), &listing, 0)
-	if listing.Thumbnail != profile.Thumbnail || listing.Name != "Hardos31" || listing.Description != "Streams" || listing.SubscriberCount != 1234 {
+	if listing.Thumbnail != profile.Thumbnail || listing.Name != "Hardos31" || listing.Description != "Streams" || listing.SubscriberCount != 1234 || listing.CreatedAt != profile.CreatedAt || listing.VideoCount == nil || *listing.VideoCount != 1621 {
 		t.Fatalf("listing was not completed: %+v", listing)
 	}
 
 	// Values the listing already has are kept.
-	known := platform.Channel{ID: "hardos31", Platform: ID, Name: "Chosen name", Thumbnail: "https://static-cdn.example/known.png", SubscriberCount: 5}
+	knownVideos := float64(7)
+	known := platform.Channel{ID: "hardos31", Platform: ID, Name: "Chosen name", Thumbnail: "https://static-cdn.example/known.png", SubscriberCount: 5, CreatedAt: "2011-01-01", VideoCount: &knownVideos}
 	p.completeChannel(context.Background(), &known, 0)
-	if known.Name != "Chosen name" || known.Thumbnail != "https://static-cdn.example/known.png" || known.SubscriberCount != 5 {
+	if known.Name != "Chosen name" || known.Thumbnail != "https://static-cdn.example/known.png" || known.SubscriberCount != 5 || known.CreatedAt != "2011-01-01" || known.VideoCount != &knownVideos || *known.VideoCount != 7 {
 		t.Fatalf("listing values were overwritten: %+v", known)
+	}
+}
+
+// The channel's creation date and video total come from the profile request itself, and a date Twitch
+// does not give, or gives malformed, stays unknown, as does a total it does not report.
+func TestChannelProfileMetadataAsksForAndOmitsUnknownValues(t *testing.T) {
+	t.Parallel()
+	queries := make(chan string, 2)
+	p := graphQLPlatform(t, func(w http.ResponseWriter, r *http.Request) {
+		queries <- string(readBody(t, r))
+		_, _ = io.WriteString(w, `{"data":{"user":{"login":"hardos31","createdAt":"not a date","videoTotal":{"totalCount":null}}}}`)
+	}, Options{})
+	profile, err := p.channelProfile(context.Background(), "hardos31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := <-queries
+	for _, field := range []string{"createdAt", "videoTotal: videos(first: 1) { totalCount }"} {
+		if !strings.Contains(query, field) {
+			t.Errorf("the profile request does not ask for %q: %s", field, query)
+		}
+	}
+	if profile.CreatedAt != "" || profile.VideoCount != nil || profile.ViewCount != nil || profile.Country != "" {
+		t.Fatalf("unknown values must stay unknown: %+v", profile)
+	}
+
+	listing := platform.Channel{ID: "hardos31", Platform: ID}
+	p.completeChannel(context.Background(), &listing, 0)
+	if listing.CreatedAt != "" || listing.VideoCount != nil {
+		t.Fatalf("listing: %+v", listing)
 	}
 }
 

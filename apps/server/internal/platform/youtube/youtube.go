@@ -1,6 +1,7 @@
 // Package youtube is the YouTube implementation of platform.Platform: yt-dlp entry parsing, search, channel
-// listings and catalogs, live lookup, comments, publication dates from the public RSS feed, and the
-// connected session (imported cookies) behind platform.Connector. It depends on no other platform and on
+// listings and catalogs, channel About metadata (join date, country, totals) from the public channel page,
+// live lookup, comments, publication dates from the public RSS feed, and the connected session (imported
+// cookies) behind platform.Connector. It depends on no other platform and on
 // nothing of the application: every yt-dlp process goes through the injected ytdlp.Runner.
 package youtube
 
@@ -25,6 +26,9 @@ const platformID = "youtube"
 // defaultFeedURL is the public RSS endpoint that lists the latest videos of a channel.
 const defaultFeedURL = "https://www.youtube.com/feeds/videos.xml"
 
+// defaultAboutURL is the public site whose channel pages carry the About panel (join date, country, totals).
+const defaultAboutURL = "https://www.youtube.com"
+
 var (
 	videoIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
 	// channelIDPattern is the canonical channel id (UC plus 22 characters); handlePattern is an
@@ -39,20 +43,23 @@ var (
 type Options struct {
 	// Runner starts every yt-dlp process; required.
 	Runner *ytdlp.Runner
-	// HTTP fetches the RSS feed; nil uses safehttp.Public().
+	// HTTP fetches the RSS feed and the channel pages; nil uses safehttp.Public().
 	HTTP *http.Client
 	// FeedURL is the RSS endpoint; empty uses the public YouTube one.
 	FeedURL string
+	// AboutURL is the site channel pages are read from, without a trailing slash; empty uses the public YouTube one.
+	AboutURL string
 	// Log receives the failures that are not reported to the caller; nil discards them.
 	Log *slog.Logger
 }
 
 // Platform is the YouTube platform.
 type Platform struct {
-	runner  *ytdlp.Runner
-	http    *http.Client
-	feedURL string
-	log     *slog.Logger
+	runner   *ytdlp.Runner
+	http     *http.Client
+	feedURL  string
+	aboutURL string
+	log      *slog.Logger
 }
 
 var (
@@ -66,12 +73,15 @@ func New(opts Options) *Platform {
 	if opts.Runner == nil {
 		panic("youtube: Options.Runner is required")
 	}
-	p := &Platform{runner: opts.Runner, http: opts.HTTP, feedURL: opts.FeedURL, log: opts.Log}
+	p := &Platform{runner: opts.Runner, http: opts.HTTP, feedURL: opts.FeedURL, aboutURL: strings.TrimSuffix(opts.AboutURL, "/"), log: opts.Log}
 	if p.http == nil {
 		p.http = safehttp.Public()
 	}
 	if p.feedURL == "" {
 		p.feedURL = defaultFeedURL
+	}
+	if p.aboutURL == "" {
+		p.aboutURL = defaultAboutURL
 	}
 	if p.log == nil {
 		p.log = slog.New(slog.NewTextHandler(io.Discard, nil))

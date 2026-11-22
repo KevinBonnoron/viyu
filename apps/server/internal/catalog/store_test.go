@@ -382,6 +382,112 @@ func TestChannelProfileStoresDoNotRenewTheListingExpiry(t *testing.T) {
 	}
 }
 
+func TestChannelMetadataRoundTripsKeepsZerosAndSurvivesPartialProfiles(t *testing.T) {
+	t.Parallel()
+	s, app, _ := newStore(t)
+	videos, views := 0.0, 1500.0
+	full := platform.Channel{ID: "UCmeta", Platform: alpha, Name: "Meta", SubscriberCount: 9, CreatedAt: "2012-05-06", Country: "FR", VideoCount: &videos, ViewCount: &views}
+	if err := s.StoreChannelListing(&full, ""); err != nil {
+		t.Fatal(err)
+	}
+	check := func(step string, want platform.Channel) {
+		t.Helper()
+		got := ChannelOf(mustFindChannel(t, s, alpha, "UCmeta"))
+		if got == nil || got.CreatedAt != want.CreatedAt || got.Country != want.Country || !sameTotal(got.VideoCount, want.VideoCount) || !sameTotal(got.ViewCount, want.ViewCount) {
+			t.Fatalf("%s: %+v, want %+v", step, got, want)
+		}
+	}
+	check("stored", full)
+	if full.VideoCount == nil || *full.VideoCount != 0 {
+		t.Fatalf("a reported zero total was lost: %+v", full)
+	}
+
+	// A partial profile (a flat listing, a failed enrichment) keeps every stored value, and tells the caller so.
+	partial := platform.Channel{ID: "UCmeta", Platform: alpha, Name: "Meta renamed"}
+	if err := s.StoreChannelProfile(&partial, ""); err != nil {
+		t.Fatal(err)
+	}
+	check("partial profile", full)
+	if partial.CreatedAt != "2012-05-06" || partial.Country != "FR" || partial.VideoCount == nil || partial.ViewCount == nil {
+		t.Fatalf("the answer lost what the record knows: %+v", partial)
+	}
+
+	// Reported values replace stored ones, a total at a time; an unreadable date or a negative total is no value.
+	newViews := 2000.0
+	negative := -1.0
+	update := platform.Channel{ID: "UCmeta", Platform: alpha, CreatedAt: "last year", Country: " BE ", ViewCount: &newViews, VideoCount: &negative}
+	if err := s.StoreChannelProfile(&update, ""); err != nil {
+		t.Fatal(err)
+	}
+	check("update", platform.Channel{CreatedAt: "2012-05-06", Country: "BE", VideoCount: &videos, ViewCount: &newViews})
+	rfc := platform.Channel{ID: "UCmeta", Platform: alpha, CreatedAt: "2012-05-06T10:20:30Z"}
+	if err := s.StoreChannelProfile(&rfc, ""); err != nil {
+		t.Fatal(err)
+	}
+	check("rfc3339 date", platform.Channel{CreatedAt: "2012-05-06T10:20:30Z", Country: "BE", VideoCount: &videos, ViewCount: &newViews})
+
+	// A channel that reports none of it has none: unknown, not zero.
+	bare := platform.Channel{ID: "UCbare", Platform: alpha, Name: "Bare"}
+	if err := s.StoreChannelProfile(&bare, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := ChannelOf(mustFindChannel(t, s, alpha, "UCbare")); got.CreatedAt != "" || got.Country != "" || got.VideoCount != nil || got.ViewCount != nil {
+		t.Fatalf("metadata was invented: %+v", got)
+	}
+
+	// Storing the same profile again writes nothing.
+	updates := 0
+	app.OnRecordAfterUpdateSuccess("channels").BindFunc(func(e *core.RecordEvent) error {
+		updates++
+		return e.Next()
+	})
+	again := platform.Channel{ID: "UCmeta", Platform: alpha, CreatedAt: "2012-05-06T10:20:30Z", Country: "BE", VideoCount: &videos, ViewCount: &newViews}
+	if err := s.StoreChannelProfile(&again, ""); err != nil || updates != 0 {
+		t.Fatalf("an unchanged profile was written again: %v %d", err, updates)
+	}
+}
+
+// Only a profile of the channel itself marks the profile as stored: a stub named by a video or a search
+// result must leave the channel eligible for the profile lookup.
+func TestOnlyARealProfileMarksTheChannelProfileSynced(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	mustStore(t, s, platform.Video{ID: "stub-video", Platform: alpha, Title: "T", ChannelID: "UCvideo", ChannelName: "From a video"}, "")
+	if _, err := s.UpsertChannel(alpha, "UCupsert", "Upserted", "https://yt3.googleusercontent.com/a=s176-c", ""); err != nil {
+		t.Fatal(err)
+	}
+	card := platform.ChannelCard{ID: "UCcard", Platform: alpha, Name: "Card", Thumbnail: "https://yt3.googleusercontent.com/c=s176-c"}
+	if _, _, err := s.storeCard(&card, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"UCvideo", "UCupsert", "UCcard"} {
+		if ProfileSynced(mustFindChannel(t, s, alpha, id)) {
+			t.Fatalf("%s: a stub was marked as a stored profile", id)
+		}
+	}
+
+	profile := platform.Channel{ID: "UCcard", Platform: alpha, Name: "Card", SubscriberCount: 3}
+	if err := s.StoreChannelProfile(&profile, ""); err != nil {
+		t.Fatal(err)
+	}
+	record := mustFindChannel(t, s, alpha, "UCcard")
+	if !ProfileSynced(record) {
+		t.Fatal("a stored profile was not marked")
+	}
+	// The mark records the first profile and is never moved by the next ones.
+	marked := record.GetDateTime("profile_synced_at")
+	if err := s.StoreChannelListing(&platform.Channel{ID: "UCcard", Platform: alpha, Name: "Card", SubscriberCount: 4}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustFindChannel(t, s, alpha, "UCcard").GetDateTime("profile_synced_at"); !got.Time().Equal(marked.Time()) {
+		t.Fatalf("the mark moved: %v -> %v", marked, got)
+	}
+	// The provider creation date is never the date the record was created.
+	if got := ChannelOf(record); got.CreatedAt != "" {
+		t.Fatalf("created at invented from the record: %q", got.CreatedAt)
+	}
+}
+
 func TestVideoAndChannelIdentityAndAliasLookups(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)

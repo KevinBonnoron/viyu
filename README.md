@@ -15,6 +15,7 @@ a Viyu server you choose.
 - Accounts with several profiles; each profile has its own subscriptions, history, reactions, home feed and accent colour. Subscriptions can be moved from one profile to another (to split a catch-all profile), creator groups travelling whole.
 - Own HLS player: quality, audio language, speed, chapters, resume, SponsorBlock skipping, private playback.
 - Live streams: LIVE badges, jump-to-live, read-only Twitch chat (live and VOD replay).
+- Channel profiles show provider-reported creation dates and public video totals; YouTube also supplies country and total views when available. Unknown metadata stays hidden, and existing profiles are enriched in the background.
 - Video comments with expandable reply threads; long comments and replies show four lines by default, with controls to read the full message or collapse it again.
 - Series inferred from YouTube and Twitch channel catalogs (and from Twitch collections), with seasons and next-episode playback.
 - Search across the sources you enabled; paste a video or channel link to open it.
