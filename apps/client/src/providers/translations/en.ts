@@ -207,6 +207,7 @@ export const en = {
   'player.controls.back': 'Back to player settings',
   'player.speed.label': 'Playback speed',
   'player.speed.normal': 'Normal (1×)',
+  'player.speed.holding': '2× while holding',
   'player.audio.label': 'Audio language',
   'player.audio.original': 'original',
   'player.audio.default': 'Default',

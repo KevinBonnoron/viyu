@@ -210,6 +210,7 @@ export const fr = {
   'player.controls.back': 'Retour aux paramètres du lecteur',
   'player.speed.label': 'Vitesse de lecture',
   'player.speed.normal': 'Normale (1×)',
+  'player.speed.holding': '2× pendant le maintien',
   'player.audio.label': 'Langue audio',
   'player.audio.original': 'd’origine',
   'player.audio.default': 'Par défaut',

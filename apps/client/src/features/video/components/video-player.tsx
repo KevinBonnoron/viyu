@@ -514,7 +514,7 @@ function VideoPlayer({
             style={{ maxHeight: fullscreen ? undefined : playerMaxHeight }}
             aria-label={t('player.controls.player')}
             className={cn(
-              'player-frame relative aspect-video touch-manipulation overflow-hidden rounded-2xl bg-black shadow-sm',
+              'player-frame relative aspect-video touch-manipulation select-none overflow-hidden rounded-2xl bg-black shadow-sm [-webkit-touch-callout:none]',
               immersive && 'player-immersive',
             )}
           >
