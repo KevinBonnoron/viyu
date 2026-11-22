@@ -160,7 +160,7 @@ func TestChannelListingIsCompletedFromTwitch(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":{"v0":{"value":"{\"chansub\":{\"restricted_bitrates\":[\"chunked\"]}}"}}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"data":{"user":{"login":"channel","displayName":"The Channel","description":"About","profileImageURL":"https://static-cdn.example/channel.png","followers":{"totalCount":99},"videos":{"edges":[{"node":{"id":"123","title":"VOD title","createdAt":"2026-11-06T12:30:00Z","lengthSeconds":3600,"viewCount":1,"previewThumbnailURL":"https://static-cdn.example/123.jpg"}}]}}}}`)
+		_, _ = io.WriteString(w, `{"data":{"user":{"login":"channel","displayName":"The Channel","description":"About","profileImageURL":"https://static-cdn.example/channel.png","createdAt":"2013-05-17T08:00:00Z","followers":{"totalCount":99},"videoTotal":{"totalCount":12},"videos":{"edges":[{"node":{"id":"123","title":"VOD title","createdAt":"2026-11-06T12:30:00Z","lengthSeconds":3600,"viewCount":1,"previewThumbnailURL":"https://static-cdn.example/123.jpg"}}]}}}}`)
 	}, Options{Runner: fakeYTDLP(t, downloader)})
 
 	info, videos, err := p.ChannelListing(context.Background(), "channel", 5, "")
@@ -169,6 +169,10 @@ func TestChannelListingIsCompletedFromTwitch(t *testing.T) {
 	}
 	if info.ID != "channel" || info.Platform != ID || info.Name != "The Channel" || info.Thumbnail != "https://static-cdn.example/channel.png" || info.SubscriberCount != 99 || info.Description != "About" {
 		t.Fatalf("channel: %+v", info)
+	}
+	// The creation date and the VOD total are the channel's, not the listing's: one page of five is no total.
+	if info.CreatedAt != "2013-05-17T08:00:00Z" || info.VideoCount == nil || *info.VideoCount != 12 || info.ViewCount != nil || info.Country != "" {
+		t.Fatalf("channel metadata: %+v", info)
 	}
 	if len(videos) != 1 {
 		t.Fatalf("videos: %+v", videos)

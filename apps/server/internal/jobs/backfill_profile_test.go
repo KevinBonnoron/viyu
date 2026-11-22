@@ -11,6 +11,7 @@ import (
 
 	"ganigeorgiev.com/pocketbase/pocketbase/core"
 
+	"github.com/KevinBonnoron/viyu/apps/server/internal/catalog"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
 )
 
@@ -31,6 +32,7 @@ func TestProfileBackfillFillsIncompleteChannelsAndDoesNotRetryTooSoon(t *testing
 	w.channel(t, alpha, "UCfixture", "Fixture channel", "")
 	complete := w.channel(t, alpha, "UCcomplete", "Complete", existing)
 	complete.Set("subscriber_count", 42)
+	complete.Set("profile_synced_at", time.Now())
 	if err := w.app.Save(complete); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +79,53 @@ func TestProfileBackfillFillsIncompleteChannelsAndDoesNotRetryTooSoon(t *testing
 	}
 	if got := w.findChannel(t, alpha, "UCfixture").GetString("thumbnail"); got != "" {
 		t.Fatalf("failed lookup invented an avatar: %q", got)
+	}
+}
+
+// A channel stored before the channel metadata existed has an avatar and a count but no stored profile: it
+// gets one lookup that fills the metadata, and a provider that has none leaves it settled rather than
+// looked up again for ever.
+func TestProfileBackfillLooksUpAnOldChannelOnceWhetherOrNotTheProviderHasMetadata(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	const avatar = "https://yt3.googleusercontent.com/old=s176-c"
+	for _, id := range []string{"UCrich", "UCbare"} {
+		old := w.channel(t, alpha, id, id, avatar)
+		old.Set("subscriber_count", 7)
+		if err := w.app.Save(old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	videos, views := 0.0, 12.0
+	asked := map[string]int{}
+	var mu sync.Mutex
+	w.alpha.listing = func(_ context.Context, id string, _ int) (platform.Channel, []platform.Video, error) {
+		mu.Lock()
+		asked[id]++
+		mu.Unlock()
+		info := platform.Channel{ID: id, Platform: alpha, Name: id, Thumbnail: avatar, SubscriberCount: 7}
+		if id == "UCrich" {
+			info.CreatedAt, info.Country, info.VideoCount, info.ViewCount = "2012-05-06", "FR", &videos, &views
+		}
+		return info, nil, nil
+	}
+	b := NewProfileBackfill(w.app, w.registry, w.store, w.sources, nil, BackfillOptions{})
+	ctx := context.Background()
+	if tried := b.pass(ctx); tried != 2 {
+		t.Fatalf("both old channels need one lookup: %d", tried)
+	}
+	rich := catalog.ChannelOf(w.findChannel(t, alpha, "UCrich"))
+	if rich.CreatedAt != "2012-05-06" || rich.Country != "FR" || rich.VideoCount == nil || *rich.VideoCount != 0 || rich.ViewCount == nil || *rich.ViewCount != 12 {
+		t.Fatalf("the metadata was not filled: %+v", rich)
+	}
+	bare := catalog.ChannelOf(w.findChannel(t, alpha, "UCbare"))
+	if bare.CreatedAt != "" || bare.Country != "" || bare.VideoCount != nil || bare.ViewCount != nil {
+		t.Fatalf("absent metadata was invented: %+v", bare)
+	}
+	// Settled: even once the retry delay has passed, neither is looked up again.
+	clear(b.attempted)
+	if tried := b.pass(ctx); tried != 0 || asked["UCrich"] != 1 || asked["UCbare"] != 1 {
+		t.Fatalf("a settled channel was looked up again: tried=%d asked=%v", tried, asked)
 	}
 }
 

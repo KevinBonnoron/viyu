@@ -80,11 +80,12 @@ func (p *Platform) feedEntries(ctx context.Context, channel string) (map[string]
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, &feedStatusError{status: response.StatusCode}
+		return nil, &statusError{status: response.StatusCode}
 	}
 	return publicationMetadata(io.LimitReader(response.Body, feedLimit))
 }
 
-type feedStatusError struct{ status int }
+// statusError is a public page or feed that did not answer 200.
+type statusError struct{ status int }
 
-func (e *feedStatusError) Error() string { return "the feed answered " + http.StatusText(e.status) }
+func (e *statusError) Error() string { return "the server answered " + http.StatusText(e.status) }

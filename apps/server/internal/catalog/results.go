@@ -92,7 +92,7 @@ func (s *Store) storeCard(card *platform.ChannelCard, ownerID string) (string, w
 			}
 		}
 	}
-	r, written, err := s.upsertChannelProfile(&platform.Channel{ID: card.ID, Platform: card.Platform, Name: card.Name, Thumbnail: card.Thumbnail}, false, ownerID)
+	r, written, err := s.upsertChannelProfile(&platform.Channel{ID: card.ID, Platform: card.Platform, Name: card.Name, Thumbnail: card.Thumbnail}, false, false, ownerID)
 	if err != nil {
 		return "", wanted{}, err
 	}

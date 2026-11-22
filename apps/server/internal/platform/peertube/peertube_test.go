@@ -125,7 +125,7 @@ func newFixture(t *testing.T) *fixture {
 		))
 	}))
 	mux.HandleFunc("GET /api/v1/video-channels/{handle}", count(func(w http.ResponseWriter, r *http.Request) {
-		reply(w, map[string]any{"name": testChannel, "displayName": "Studio", "host": f.host, "followersCount": 40, "description": "About the studio",
+		reply(w, map[string]any{"name": testChannel, "displayName": "Studio", "host": f.host, "followersCount": 40, "description": "About the studio", "createdAt": "2018-03-01T15:16:17.131Z",
 			"avatars": []map[string]any{{"path": "/avatar-small.png", "width": 48}, {"path": "/avatar-large.png", "width": 600}}})
 	}))
 	mux.HandleFunc("GET /api/v1/video-channels/{handle}/videos", count(func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +137,7 @@ func newFixture(t *testing.T) *fixture {
 			reply(w, map[string]any{"total": 1, "data": []any{video(liveUUID, true)}})
 			return
 		}
-		reply(w, map[string]any{"total": 2, "data": []any{video(testUUID, true), video("22222222-aaaa-bbbb-cccc-dddddddddddd", true)}})
+		reply(w, map[string]any{"total": 57, "data": []any{video(testUUID, true), video("22222222-aaaa-bbbb-cccc-dddddddddddd", true)}})
 	}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -526,6 +526,13 @@ func TestChannelListingAndLive(t *testing.T) {
 	if channel.ID != f.channelID() || channel.Platform != "peertube" || channel.Name != "Studio" || channel.SubscriberCount != 40 || channel.Description != "About the studio" || channel.Thumbnail != "http://"+f.host+"/avatar-large.png" || len(videos) != 2 {
 		t.Fatalf("channel: %+v %d videos", channel, len(videos))
 	}
+	if channel.CreatedAt != "2018-03-01T15:16:17Z" {
+		t.Fatalf("created at: %q", channel.CreatedAt)
+	}
+	// The total is the instance's own count, not the page's size, and no view total is exposed.
+	if channel.VideoCount == nil || *channel.VideoCount != 57 || channel.ViewCount != nil || channel.Country != "" {
+		t.Fatalf("totals: %+v", channel)
+	}
 	if videos[0].ID != f.videoID(testUUID) || videos[0].ChannelID != f.channelID() {
 		t.Fatalf("channel videos: %+v", videos)
 	}
@@ -549,5 +556,36 @@ func TestEndpointPathsAreEscaped(t *testing.T) {
 	p := New(Options{Scheme: "http", Instances: []string{"a.example"}})
 	if got := p.channelURL("n", "a.example"); got != "http://a.example/api/v1/video-channels/"+url.PathEscape("n@a.example") {
 		t.Fatalf("channel url: %q", got)
+	}
+}
+
+// A malformed creation date is unknown, and a listing without a total reports none instead of the page's size.
+func TestChannelListingOmitsWhatTheInstanceDoesNotReport(t *testing.T) {
+	t.Parallel()
+	for name, profile := range map[string]string{
+		"malformed": `{"name":"studio","createdAt":"last spring"}`,
+		"empty":     `{"name":"studio","createdAt":""}`,
+		"absent":    `{"name":"studio"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/videos") {
+					_, _ = w.Write([]byte(`{"data":[{"uuid":"` + testUUID + `","name":"Open movie"}]}`))
+					return
+				}
+				_, _ = w.Write([]byte(profile))
+			}))
+			defer server.Close()
+			host := strings.TrimPrefix(server.URL, "http://")
+			p := New(Options{HTTP: server.Client(), Scheme: "http", Instances: []string{host}})
+			channel, videos, err := p.ChannelListing(context.Background(), "studio@"+host, 20, "")
+			if err != nil || len(videos) != 1 {
+				t.Fatalf("listing: %+v %v", videos, err)
+			}
+			if channel.CreatedAt != "" || channel.VideoCount != nil || channel.ViewCount != nil || channel.Country != "" {
+				t.Fatalf("unknown values must stay unknown: %+v", channel)
+			}
+		})
 	}
 }

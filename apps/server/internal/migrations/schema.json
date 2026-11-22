@@ -144,6 +144,26 @@
           "type": "number"
         },
         {
+          "id": "text2790143001",
+          "name": "channel_created_at",
+          "type": "text"
+        },
+        {
+          "id": "text2790143002",
+          "name": "country",
+          "type": "text"
+        },
+        {
+          "id": "json2790143003",
+          "name": "totals",
+          "type": "json"
+        },
+        {
+          "id": "date2790143004",
+          "name": "profile_synced_at",
+          "type": "date"
+        },
+        {
           "id": "date261981154",
           "name": "expires_at",
           "required": true,

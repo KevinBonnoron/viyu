@@ -52,6 +52,9 @@ func (p *Platform) ChannelListing(ctx context.Context, id string, limit int, coo
 		Platform: platformID, Name: platform.First(playlist.Channel, playlist.Uploader, playlist.Title),
 		Thumbnail: playlist.channelThumbnail(), Description: playlist.Description, SubscriberCount: playlist.Followers,
 	}
+	// The playlist knows neither the join date nor the totals of the channel: its entry count is a window of
+	// the /videos tab. The channel page does, and its failure leaves the listing as it is.
+	p.enrichChannel(ctx, platform.First(canonicalID(info.ID), canonicalID(id), id), &info)
 	videos := make([]platform.Video, 0, len(playlist.Entries))
 	for _, entry := range playlist.Entries {
 		videos = append(videos, channelEntryVideo(entry, info))
