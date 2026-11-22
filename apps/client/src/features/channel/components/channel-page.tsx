@@ -161,12 +161,12 @@ function Channel({
               <ChannelHeaderSkeleton />
             </section>
           ) : (
-            <div className="flex flex-wrap items-center gap-5 rounded-2xl border bg-card p-6">
-              <ChannelAvatar src={channel?.thumbnail} />
-              <div className="min-w-0 flex-1">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-2xl border bg-card p-4 sm:gap-5 sm:p-6 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
+              <ChannelAvatar src={channel?.thumbnail} className="size-16 sm:size-20" />
+              <div className="min-w-0">
                 <PageTitle>{named && channel ? channel.name : t('player.unknownChannel')}</PageTitle>
                 {live && (
-                  <p className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
+                  <p className="mt-1 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
                     <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-white" />
                     {t('channel.live')}
                   </p>
@@ -176,26 +176,28 @@ function Channel({
                     {t('channel.subscribers', { count: formatCompactNumber(channel.subscriberCount, language) })}
                   </p>
                 )}
-                {channel?.description && <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{channel.description}</p>}
+                {channel?.description && <p className="text-sm text-muted-foreground mt-1 line-clamp-2 [overflow-wrap:anywhere]">{channel.description}</p>}
               </div>
-              {live?.recordId && (
-                <Button asChild className="rounded-full bg-red-600 text-white hover:bg-red-600/90">
-                  <VideoLink video={{ id: live.recordId, channelId, live: true, source }} title={live.title}>
-                    <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-white" />
-                    {t('channel.watchLive')}
-                  </VideoLink>
+              <div className="col-span-2 flex flex-wrap items-center gap-2 lg:col-span-1 lg:justify-end">
+                {live?.recordId && (
+                  <Button asChild className="grow rounded-full bg-red-600 text-white hover:bg-red-600/90 lg:grow-0">
+                    <VideoLink video={{ id: live.recordId, channelId, live: true, source }} title={live.title}>
+                      <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-white" />
+                      {t('channel.watchLive')}
+                    </VideoLink>
+                  </Button>
+                )}
+                <Button
+                  variant={subscription.subscribed ? 'secondary' : 'default'}
+                  className="grow rounded-full lg:grow-0"
+                  disabled={subscription.disabled}
+                  aria-pressed={subscription.subscribed}
+                  onClick={() => void subscription.toggle()}
+                >
+                  {subscription.subscribed ? <UserCheck aria-hidden="true" className="size-4" /> : <UserPlus aria-hidden="true" className="size-4" />}
+                  {t(subscription.subscribed ? 'player.subscribed' : 'player.subscribe')}
                 </Button>
-              )}
-              <Button
-                variant={subscription.subscribed ? 'secondary' : 'default'}
-                className="rounded-full"
-                disabled={subscription.disabled}
-                aria-pressed={subscription.subscribed}
-                onClick={() => void subscription.toggle()}
-              >
-                {subscription.subscribed ? <UserCheck aria-hidden="true" className="size-4" /> : <UserPlus aria-hidden="true" className="size-4" />}
-                {t(subscription.subscribed ? 'player.subscribed' : 'player.subscribe')}
-              </Button>
+              </div>
             </div>
           )}
           <div className="space-y-4">
@@ -280,13 +282,16 @@ function Channel({
 /** The channel's header card as it will look: avatar, a few lines of text and the subscribe button. The title lives in the topbar. */
 function ChannelHeaderSkeleton() {
   return (
-    <div aria-hidden="true" className="flex flex-wrap items-center gap-5 rounded-2xl border bg-card p-6">
-      <Skeleton className="size-20 rounded-full" />
-      <div className="min-w-0 flex-1 space-y-2">
+    <div
+      aria-hidden="true"
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-2xl border bg-card p-4 sm:gap-5 sm:p-6 lg:grid-cols-[auto_minmax(0,1fr)_auto]"
+    >
+      <Skeleton className="size-16 rounded-full sm:size-20" />
+      <div className="min-w-0 space-y-2">
         <Skeleton className="h-4 w-2/5" />
         <Skeleton className="h-4 w-full max-w-md" />
       </div>
-      <Skeleton className="h-10 w-32 rounded-full" />
+      <Skeleton className="col-span-2 h-10 w-32 rounded-full lg:col-span-1" />
     </div>
   );
 }
