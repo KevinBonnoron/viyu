@@ -1,6 +1,6 @@
 import { useLocation, useNavigate, useSearch as useRouteSearch } from '@tanstack/react-router';
 import { ArrowUpRight, Check, Heart, LoaderCircle, Search, UserCheck, UserPlus, Video, X } from 'lucide-react';
-import { Fragment, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, type ReactNode, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChannelAvatar } from '@/components/channel-avatar';
 import { CommandMenu } from '@/components/command-menu';
 import { PlatformBadge } from '@/components/platform-badge';
@@ -11,6 +11,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useThumbnail } from '@/features/video/hooks/use-thumbnail';
 import { useVideoMetadata } from '@/features/video/hooks/use-video-metadata';
+import { hasPublicationTime, mergePublication, publicationInstant } from '@/features/video/utils/publication';
 import { displayTitle, needsEnrichment, thumbnailCandidates } from '@/features/video/utils/video-presentation';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
 import { useLocalSearch } from '@/hooks/useLocalSearch';
@@ -25,7 +26,7 @@ import { localVideoResult } from '@/lib/local-search';
 import { pastedLink } from '@/lib/pasted-link';
 import { shortcutModifierLabel } from '@/lib/platform-shortcut';
 import { searchPlatformOrAll } from '@/lib/source-activation';
-import { cn, formatDuration } from '@/lib/utils';
+import { cn, formatDuration, formatRelativePublication } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
 import { type TranslationKey, useI18n } from '@/providers/i18n-provider';
 import { useActiveSource, useSources } from '@/providers/sources-provider';
@@ -441,8 +442,23 @@ function SearchVideoChoice({
   local,
   ...row
 }: RowProps & EnrichmentProps & { video: VideoResult; local?: LocalRowStatus }) {
-  const metadata = useVideoMetadata<HTMLDivElement>(video, ready && needsEnrichment(video, preferOriginal), owner);
+  const { t, language } = useI18n();
+  const needsDate = !video.live && !video.published;
+  const metadata = useVideoMetadata<HTMLDivElement>(video, ready && (needsEnrichment(video, preferOriginal) || needsDate), owner);
   const unproven = preferOriginal && !video.originalTitleVerified;
+  const published = mergePublication(video.published, metadata.published);
+  const instant = publicationInstant(published);
+  const publicationDate = instant ? instant.toLocaleDateString(language, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : null;
+  const waitingForDate = !video.live && !instant && !metadata.complete && !metadata.failed;
+  const publication = instant ? (
+    <time dateTime={published} title={publicationDate ?? undefined}>
+      {formatRelativePublication(instant, language, undefined, hasPublicationTime(published))}
+    </time>
+  ) : waitingForDate ? (
+    <span role="img" aria-label={t('video.publicationDateLoading')} className="block h-4 w-28 animate-pulse rounded bg-muted" />
+  ) : !video.live ? (
+    <span>{t('series.unknownDate')}</span>
+  ) : null;
   return (
     <SearchChoiceRow
       {...row}
@@ -450,8 +466,9 @@ function SearchVideoChoice({
       rowRef={metadata.ref}
       title={displayTitle(video, preferOriginal, metadata.title)}
       thumbnails={thumbnailCandidates(video, metadata)}
-      busy={ready && unproven && !metadata.title && !metadata.failed}
+      busy={(ready && unproven && !metadata.title && !metadata.failed) || waitingForDate}
       failed={unproven && metadata.failed}
+      publication={publication}
     />
   );
 }
@@ -467,9 +484,18 @@ function SearchChoiceRow({
   rowRef,
   title,
   thumbnails,
+  publication,
   busy = false,
   failed = false,
-}: RowProps & { local?: LocalRowStatus; rowRef?: RefObject<HTMLDivElement | null>; title: string; thumbnails: string[]; busy?: boolean; failed?: boolean }) {
+}: RowProps & {
+  local?: LocalRowStatus;
+  rowRef?: RefObject<HTMLDivElement | null>;
+  title: string;
+  thumbnails: string[];
+  publication?: ReactNode;
+  busy?: boolean;
+  failed?: boolean;
+}) {
   const { t } = useI18n();
   const thumbnail = useThumbnail(thumbnails);
   return (
@@ -494,10 +520,10 @@ function SearchChoiceRow({
             {choice.video ? <Video aria-hidden="true" className="size-5 opacity-50" /> : <ArrowUpRight aria-hidden="true" className="size-5" />}
           </span>
         )}
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{title}</span>
           <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <PlatformBadge platform={choice.platform} className="size-5 shadow-none [&_svg]:size-3" />
+            <PlatformBadge platform={choice.platform} className="size-5 shrink-0 shadow-none [&_svg]:size-3" />
             <span className="truncate">{choice.subtitle}</span>
             {failed && <span className="shrink-0">· {t('video.originalTitleFailed')}</span>}
             {local?.watched && (
@@ -517,6 +543,7 @@ function SearchChoiceRow({
               </span>
             )}
           </span>
+          {publication && <span className="mt-1 block text-xs text-muted-foreground">{publication}</span>}
         </span>
       </button>
       {choice.kind === 'channel' && <SearchChannelSubscription choice={choice} onError={onSubscriptionError} />}
