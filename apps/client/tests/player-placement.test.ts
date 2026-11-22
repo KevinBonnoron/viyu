@@ -1,16 +1,12 @@
 import { decideBeside } from '@/features/video/hooks/use-player-layout';
 import { describe, expect, test } from 'bun:test';
 
-describe('decideBeside', () => {
-  test('a wide, short area puts the panel beside: the video is limited by the height anyway', () => {
-    expect(decideBeside(1700, 800)).toBe(true);
+describe('player side-panel placement', () => {
+  test('stacks the panel below the video just under the available-width cutoff', () => {
+    expect(decideBeside(959)).toBe(false);
   });
 
-  test('a tall area stacks the panel: beside, the video would shrink', () => {
-    expect(decideBeside(1400, 1100)).toBe(false);
-  });
-
-  test('a narrow area always stacks', () => {
-    expect(decideBeside(900, 400)).toBe(false);
+  test('keeps the panel beside the video at the available-width cutoff', () => {
+    expect(decideBeside(960)).toBe(true);
   });
 });

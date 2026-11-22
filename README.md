@@ -13,7 +13,7 @@ a Viyu server you choose.
 
 - Subscribe to YouTube, Twitch and PeerTube channels; one feed, one subscriptions timeline, history, likes and "not interested".
 - Accounts with several profiles; each profile has its own subscriptions, history, reactions, home feed and accent colour. Subscriptions can be moved from one profile to another (to split a catch-all profile), creator groups travelling whole.
-- Own HLS player: quality, audio language, speed, chapters, resume, SponsorBlock skipping with an in-player confirmation during loading, private playback; fullscreen shows the video title alongside the controls.
+- Own HLS player: quality, audio language, speed, chapters, resume, SponsorBlock skipping with an in-player confirmation during loading, private playback; fullscreen shows the video title alongside the controls. Details stay beside the player from 960px of available page width and stack below on narrower screens.
 - Player gestures: click to play/pause immediately; rapid native mouse double-clicks (within 250 ms) or touch double taps on the left/right side seek five seconds backward/forward. Mouse seeking restores the initial playback state without flashing the play/pause icon: only that icon waits for the 250 ms window, not playback. Spaced clicks remain separate playback toggles. Hold the video for half a second with a mouse or finger for temporary 2× playback; releasing or cancelling restores the selected speed.
 - Live streams: LIVE badges, jump-to-live, read-only Twitch chat (live and VOD replay).
 - Channel profiles show provider-reported creation dates and public video totals; YouTube also supplies country and total views when available. Unknown metadata stays hidden, and existing profiles are enriched in the background.
