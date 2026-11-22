@@ -60,25 +60,12 @@ export function usePlayerLayout(
   return maxHeight;
 }
 
-/** Height kept below the video for the channel and actions row and its spacing, which the frame never takes. */
-const INFORMATION_ROW = 170;
-/** Width of the side panel beside the video (22rem) plus the gap, and the narrowest column the video may keep beside it. */
-const SIDE_PANEL_SPACE = 352 + 16;
-const MIN_VIDEO_BESIDE = 640;
+/** Available page width that leaves room for the 22rem panel, its rail and a usable video column. */
+const MIN_BESIDE_WIDTH = 960;
 
-/**
- * Whether the side panel goes beside the video, decided from the space the page really gives the player (its own width and
- * the window height below it), not from the viewport: browser chrome, a sidebar or a zoom level then change nothing. The
- * panel goes beside when the video keeps at least the width the available height lets a 16:9 frame take (so moving the panel
- * aside costs the video nothing) and never drops below a usable width.
- */
-export function decideBeside(contentWidth: number, availableHeight: number): boolean {
-  const besideWidth = contentWidth - SIDE_PANEL_SPACE;
-  if (besideWidth < MIN_VIDEO_BESIDE) {
-    return false;
-  }
-  const widthTheHeightAllows = (availableHeight * 16) / 9;
-  return besideWidth >= Math.min(widthTheHeightAllows, contentWidth) * 0.9;
+/** Keep details beside the video on wider page columns, regardless of window height or scroll position. */
+export function decideBeside(contentWidth: number): boolean {
+  return contentWidth >= MIN_BESIDE_WIDTH;
 }
 
 /** `beside` or `stacked` for the player root, measured on the element and kept up to date as it or the window resizes. */
@@ -90,18 +77,13 @@ export function useSidePanelPlacement(rootRef: RefObject<HTMLElement | null>): '
       return;
     }
     const update = () => {
-      const bounds = root.getBoundingClientRect();
-      // Closing a panel can move the scroll anchor; that must not change which side of the video its rail occupies.
-      const available = window.innerHeight - Math.max(0, bounds.top + window.scrollY) - INFORMATION_ROW;
-      setPlacement(decideBeside(bounds.width, available) ? 'beside' : 'stacked');
+      setPlacement(decideBeside(root.getBoundingClientRect().width) ? 'beside' : 'stacked');
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(root);
-    window.addEventListener('resize', update);
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', update);
     };
   }, [rootRef]);
   return placement;
