@@ -27,6 +27,7 @@ import type { VideoChapter } from '@/types';
 type SettingsSection = 'quality' | 'audio' | 'speed';
 const playbackRates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 const DOUBLE_TAP_WINDOW = 350;
+const HOLD_SPEED_DELAY = 500;
 const SURFACE_CONTROLS = 'button, input, a, [role="menu"], [data-chapters], [data-player-controls], [data-player-topbar]';
 /** How far behind the live edge playback can be before it counts as "not live" and offers a way back, in seconds. hls.js itself starts a stream 10 to 20 seconds behind its edge. */
 const LIVE_EDGE_TOLERANCE = 25;
@@ -151,6 +152,7 @@ export function VideoControls({
   const [menuPage, setMenuPage] = useState<'root' | SettingsSection>('root');
   const previousSection = useRef<SettingsSection>('quality');
   const playbackRate = useRef(1);
+  const [boosting, setBoosting] = useState(false);
   // The first tap can enter native fullscreen and rebind the handlers before the second tap arrives.
   const lastTap = useRef<{ right: boolean; time: number } | null>(null);
   const [mouseClicks] = useState(() => new PlaybackClickSequence());
@@ -302,13 +304,17 @@ export function VideoControls({
       x: number;
       y: number;
       time: number;
+      timer?: number;
+      restoreRate?: number;
     } | null = null;
     video.playbackRate = playbackRate.current;
     const synchronize = () => {
       const duration =
         Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Number.isFinite(knownDuration) && knownDuration > 0 ? knownDuration : 0;
       const time = video.readyState > 0 ? video.currentTime : resumePosition;
-      playbackRate.current = video.playbackRate;
+      if (press?.restoreRate === undefined) {
+        playbackRate.current = video.playbackRate;
+      }
       setMedia({
         time: Math.max(0, duration > 0 ? Math.min(time, duration) : time),
         duration,
@@ -341,11 +347,21 @@ export function VideoControls({
       seekBy(right ? SEEK_STEP : -SEEK_STEP);
       reveal();
     };
+    const releasePress = () => {
+      const previous = press;
+      press = null;
+      clearTimeout(previous?.timer);
+      if (previous?.restoreRate !== undefined) {
+        playbackRate.current = previous.restoreRate;
+        video.playbackRate = previous.restoreRate;
+        setBoosting(false);
+      }
+    };
     const cancelGesture = () => {
       if (press) {
         suppressSurfaceClick.current = true;
       }
-      press = null;
+      releasePress();
       forgetTaps();
       setClickIcon(null);
     };
@@ -378,6 +394,15 @@ export function VideoControls({
       suppressSurfaceClick.current = false;
       const start = { id: event.pointerId, pointerType: event.pointerType, x: event.clientX, y: event.clientY, time: event.timeStamp };
       press = start;
+      press.timer = window.setTimeout(() => {
+        if (press !== start) {
+          return;
+        }
+        forgetTaps();
+        press.restoreRate = video.playbackRate;
+        video.playbackRate = 2;
+        setBoosting(true);
+      }, HOLD_SPEED_DELAY);
     };
     const pointerMove = (event: PointerEvent) => {
       if (press?.id === event.pointerId && (event.buttons === 0 || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 12)) {
@@ -389,8 +414,8 @@ export function VideoControls({
         return;
       }
       const start = press;
-      press = null;
-      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) {
+      releasePress();
+      if (start.restoreRate !== undefined || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) {
         suppressSurfaceClick.current = true;
         forgetTaps();
         return;
@@ -461,7 +486,7 @@ export function VideoControls({
         return;
       }
       if (suppressSurfaceClick.current) {
-        // A cancelled press must not become a click (including the phone's fullscreen upgrade).
+        // A held or cancelled press must not become a click (including the phone's fullscreen upgrade).
         suppressSurfaceClick.current = false;
         event.preventDefault();
         event.stopPropagation();
@@ -484,6 +509,11 @@ export function VideoControls({
         // Playback acts now; keep only its icon stable while the native click pair is being classified.
         setClickIcon(event.detail === 0 ? null : { paused: video.paused });
         playPause();
+      }
+    };
+    const contextMenu = (event: MouseEvent) => {
+      if ((touch || inputType.current === 'touch') && !(event.target instanceof Element && event.target.closest(SURFACE_CONTROLS))) {
+        event.preventDefault();
       }
     };
     const focusInside = (event: FocusEvent) => {
@@ -562,6 +592,7 @@ export function VideoControls({
       video.addEventListener(event, synchronize);
     }
     frame.addEventListener('click', clickFrame, true);
+    frame.addEventListener('contextmenu', contextMenu);
     frame.addEventListener('dblclick', doubleClickFrame);
     video.addEventListener('play', revealInside);
     video.addEventListener('playing', revealInside);
@@ -588,12 +619,13 @@ export function VideoControls({
         suppressSurfaceClick.current = true;
         forgetTaps();
       }
-      press = null;
+      releasePress();
       clearTimeout(hideTimer.current);
       for (const event of events) {
         video.removeEventListener(event, synchronize);
       }
       frame.removeEventListener('click', clickFrame, true);
+      frame.removeEventListener('contextmenu', contextMenu);
       frame.removeEventListener('dblclick', doubleClickFrame);
       video.removeEventListener('play', revealInside);
       video.removeEventListener('playing', revealInside);
@@ -908,6 +940,15 @@ export function VideoControls({
             </div>
           )}
         </div>
+      )}
+      {boosting && (
+        <p
+          role="status"
+          data-player-speed-boost=""
+          className="absolute left-1/2 top-1/4 -translate-x-1/2 rounded-full bg-black/75 px-4 py-2 text-sm font-semibold"
+        >
+          {t('player.speed.holding')}
+        </p>
       )}
       {actionError && (
         <p role="alert" className="absolute left-4 top-4 rounded-lg bg-black/80 px-3 py-2 text-xs">
