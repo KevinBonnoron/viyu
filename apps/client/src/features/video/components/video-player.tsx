@@ -635,6 +635,7 @@ function VideoPlayer({
                 frameRef={frameRef}
                 endScreen={showEndScreen}
                 fullscreen={fullscreen}
+                title={videoMeta?.title}
                 touch={playerFullscreen.touch}
                 onToggleFullscreen={playerFullscreen.toggle}
                 version={streamVersion}
