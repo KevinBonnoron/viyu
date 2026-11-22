@@ -59,6 +59,7 @@ export function VideoControls({
   videoRef,
   frameRef,
   fullscreen,
+  title,
   endScreen,
   touch,
   onToggleFullscreen,
@@ -83,6 +84,7 @@ export function VideoControls({
   frameRef: RefObject<HTMLElement | null>;
   /** Whether the frame fills the screen (the Fullscreen API, or the sideways view of a phone). */
   fullscreen: boolean;
+  title?: string;
   /** The end screen owns the frame and its keyboard interactions. */
   endScreen: boolean;
   /** Touch layout, as on YouTube's mobile player: play and next in the middle of the video, settings at its top. */
@@ -702,17 +704,27 @@ export function VideoControls({
           </div>
         </div>
       )}
-      {touch && (
+      {(touch || (fullscreen && title)) && (
         <div
           data-player-topbar=""
           inert={!show}
           className={cn(
-            'absolute inset-x-0 top-0 flex justify-end gap-1 bg-gradient-to-b from-black/70 to-transparent px-2 pb-6 pt-1',
-            show ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
+            'absolute inset-x-0 top-0 flex justify-end bg-gradient-to-b from-black/70 to-transparent transition-opacity',
+            fullscreen ? 'items-start gap-3 px-3 pb-8 pt-3 sm:px-4 sm:pt-4' : 'gap-1 px-2 pb-6 pt-1',
+            show ? 'opacity-100' : 'opacity-0',
           )}
         >
-          {privacyButton}
-          {settingsButton}
+          {fullscreen && title && (
+            <p title={title} className="min-w-0 flex-1 self-center line-clamp-2 text-sm font-medium leading-snug [overflow-wrap:anywhere] sm:text-base">
+              {title}
+            </p>
+          )}
+          {touch && (
+            <div className={cn('flex shrink-0 items-center gap-1', show ? 'pointer-events-auto' : 'pointer-events-none')}>
+              {privacyButton}
+              {settingsButton}
+            </div>
+          )}
         </div>
       )}
       {actionError && (
