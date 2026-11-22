@@ -133,7 +133,7 @@ func (c *composition) start(se *core.ServeEvent, opts Options) error {
 		Accounts:      accounts.New(app, store, accountSources, platforms),
 		Subscriptions: subscriptionsService,
 		Companion:     companion.New(app, store, subscriptionsService, accountSources),
-		Feed:          feed.New(app, store, accountSources, refresher),
+		Feed:          feed.New(app, store, accountSources, refresher, seriesStore),
 		Stats:         stats.New(app, store, accountSources),
 		Refresher:     refresher,
 		Catalogs:      catalogs,

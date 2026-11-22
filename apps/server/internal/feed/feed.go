@@ -25,6 +25,7 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/apierr"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/catalog"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
+	"github.com/KevinBonnoron/viyu/apps/server/internal/series"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/sources"
 )
 
@@ -49,15 +50,16 @@ type Refresher interface {
 
 // Service ranks the cached videos of a profile. It is safe for concurrent use.
 type Service struct {
-	app       core.App
-	store     *catalog.Store
-	accounts  *sources.Service
-	refresher Refresher
+	app         core.App
+	store       *catalog.Store
+	accounts    *sources.Service
+	refresher   Refresher
+	seriesStore *series.Store
 }
 
-// New returns the service. refresher may be nil: stale channels are then simply not refreshed.
-func New(app core.App, store *catalog.Store, accounts *sources.Service, refresher Refresher) *Service {
-	return &Service{app: app, store: store, accounts: accounts, refresher: refresher}
+// New returns the service. A nil refresher skips refreshes; a nil seriesStore disables series continuations.
+func New(app core.App, store *catalog.Store, accounts *sources.Service, refresher Refresher, seriesStore *series.Store) *Service {
+	return &Service{app: app, store: store, accounts: accounts, refresher: refresher, seriesStore: seriesStore}
 }
 
 func failed(message string, cause error) *apierr.Error { return apierr.Internal(message, cause) }
@@ -71,22 +73,20 @@ func (s *Service) Feed(ctx context.Context, userID, profileID string) ([]platfor
 	if err != nil {
 		return nil, failed(message, err)
 	}
-	candidates, err := s.subscriptionCandidates(ctx, userID, profileID)
+	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, time.Time{})
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
 	now := time.Now()
 	ranked := make([]scored, 0, len(candidates))
 	for _, v := range candidates {
-		ranked = append(ranked, scored{v, scoreVideo(v, frequency, nil, now)})
+		ranked = append(ranked, scored{video: v, score: scoreVideo(v, frequency, nil, now)})
 	}
 	return top(ranked, feedLimit), nil
 }
 
-// Recommendations ranks the videos to watch after the video with the record id anchorVideoRecordID: the
-// subscriptions' candidates plus the cached videos of the anchor's own channel (same-channel videos matter
-// even without a subscription, and watching the video has most likely cached them), pulled up when they
-// share the anchor's channel or tags. The top 20 are presented newest first.
+// Recommendations ranks cached subscription and anchor-channel videos in context. When the anchor has a
+// publication date, bounded queries also retrieve videos near that date, and results retain ranking order.
 //
 // An account that hides subscriber-only videos never sees them here, and a video the profile already watched
 // is not suggested again. An anchor that is not stored (or that the account may not see) anchors nothing:
@@ -101,16 +101,30 @@ func (s *Service) Recommendations(ctx context.Context, userID, profileID, anchor
 	if err != nil {
 		return nil, failed(message, err)
 	}
-	candidates, err := s.subscriptionCandidates(ctx, userID, profileID)
+	var published time.Time
+	if anchor != nil {
+		published = anchor.published
+	}
+	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, published)
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
 	if anchor != nil {
-		more, err := s.anchorChannelCandidates(userID, anchor.channelRecordID)
+		more, err := s.anchorChannelCandidates(userID, anchor.channelRecordID, published)
 		if err != nil {
 			return nil, failed(message, err)
 		}
 		candidates = append(candidates, more...)
+	}
+	var continuation *platform.Video
+	if anchor != nil {
+		continuation, err = s.nextSeriesVideo(userID, anchorVideoRecordID)
+		if err != nil {
+			return nil, failed(message, err)
+		}
+		if continuation != nil {
+			candidates = append(candidates, *continuation)
+		}
 	}
 	hideSubscriberOnly, err := s.hidesSubscriberOnly(userID)
 	if err != nil {
@@ -124,14 +138,30 @@ func (s *Service) Recommendations(ctx context.Context, userID, profileID, anchor
 	now := time.Now()
 	seen := map[string]bool{}
 	ranked := make([]scored, 0, len(candidates))
+	eligibleContinuation := false
 	for _, v := range candidates {
 		if seen[v.RecordID] || watched[v.RecordID] || v.RecordID == anchorVideoRecordID || (hideSubscriberOnly && v.SubscriberOnly) {
 			continue
 		}
 		seen[v.RecordID] = true
-		ranked = append(ranked, scored{v, scoreVideo(v, frequency, anchor, now)})
+		if continuation != nil && v.RecordID == continuation.RecordID {
+			eligibleContinuation = true
+			continue
+		}
+		ranked = append(ranked, rankVideo(v, frequency, anchor, now))
 	}
-	return top(ranked, recommendationLimit), nil
+	if !eligibleContinuation {
+		continuation = nil
+	}
+	results := topRanked(ranked, recommendationLimit, continuation)
+	if anchor == nil || anchor.published.IsZero() {
+		start := 0
+		if continuation != nil {
+			start = 1
+		}
+		platform.SortByPublication(results[start:])
+	}
+	return results, nil
 }
 
 // gatherError reports a cancelled request as its context error and anything else as the generic failure.
@@ -158,7 +188,8 @@ func (s *Service) anchorOf(userID, recordID string) (*anchor, error) {
 	if !catalog.VisibleTo(record, userID) {
 		return nil, nil
 	}
-	return &anchor{channelRecordID: record.GetString("channel"), tags: s.store.VideoOf(record).Tags}, nil
+	video := s.store.VideoOf(record)
+	return &anchor{channelRecordID: record.GetString("channel"), tags: video.Tags, published: platform.ParsePublished(video.Published)}, nil
 }
 
 // likedTagFrequency counts how often each tag appears across the videos a profile liked; the rankings use it
@@ -197,7 +228,7 @@ func (s *Service) likedTagFrequency(profileID string) (map[string]int, error) {
 // subscriptionCandidates lists the cached videos of the profile's subscribed channels that the account may
 // see, from the platforms it uses. The channels whose listing is stale are scheduled for a refresh, in one
 // call; nothing else leaves the database.
-func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID string) ([]platform.Video, error) {
+func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID string, published time.Time) ([]platform.Video, error) {
 	active, err := s.accounts.Activations(userID)
 	if err != nil {
 		return nil, err
@@ -214,11 +245,11 @@ func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID 
 	for i, channel := range channels {
 		ids[i] = channel.Id
 	}
-	return s.cachedVideos(userID, ids)
+	return s.cachedVideos(userID, ids, published)
 }
 
 // anchorChannelCandidates lists the cached videos of the anchor's channel when its platform is on.
-func (s *Service) anchorChannelCandidates(userID, channelRecordID string) ([]platform.Video, error) {
+func (s *Service) anchorChannelCandidates(userID, channelRecordID string, published time.Time) ([]platform.Video, error) {
 	if channelRecordID == "" {
 		return nil, nil
 	}
@@ -236,7 +267,7 @@ func (s *Service) anchorChannelCandidates(userID, channelRecordID string) ([]pla
 	if !active[channel.GetString("platform")] {
 		return nil, nil
 	}
-	return s.cachedVideos(userID, []string{channel.Id})
+	return s.cachedVideos(userID, []string{channel.Id}, published)
 }
 
 // subscribedChannels loads the channels the profile subscribes to, with IN queries, keeping those of the
@@ -287,9 +318,9 @@ func (s *Service) scheduleStale(channels []*core.Record) {
 }
 
 // cachedVideos reads the stored videos of the channels (by record id) that the account may see: the public
-// ones and those it owns. At most candidatesPerQuery of the newest per batch of channels are read, and they
-// are presented with one batch (see catalog.Store.VideosOf).
-func (s *Service) cachedVideos(userID string, channelIDs []string) ([]platform.Video, error) {
+// ones and those it owns. Each batch reads the newest videos, or for dated anchors bounded sets on each
+// side of the anchor date. All records are presented with one batch (see catalog.Store.VideosOf).
+func (s *Service) cachedVideos(userID string, channelIDs []string, published time.Time) ([]platform.Video, error) {
 	var records []*core.Record
 	for chunk := range slices.Chunk(channelIDs, queryBatch) {
 		params := dbx.Params{"user": userID}
@@ -304,11 +335,22 @@ func (s *Service) cachedVideos(userID string, channelIDs []string) ([]platform.V
 		}
 		// The visibility clause is catalog.VisibleTo, in SQL, so the limit counts visible rows only.
 		filter += ") && (owners:length = 0 || owners.id ?= {:user})"
-		found, err := s.app.FindRecordsByFilter("videos", filter, "-published", candidatesPerQuery, 0, params)
-		if err != nil {
-			return nil, err
+		if published.IsZero() {
+			found, err := s.app.FindRecordsByFilter("videos", filter, "-published", candidatesPerQuery, 0, params)
+			if err != nil {
+				return nil, err
+			}
+			records = append(records, found...)
+		} else {
+			params["published"] = published.UTC().Format(platform.StoredLayout)
+			for _, query := range []struct{ comparison, sort string }{{"<=", "-published"}, {">", "published"}} {
+				near, err := s.app.FindRecordsByFilter("videos", filter+" && published "+query.comparison+" {:published}", query.sort, candidatesPerQuery, 0, params)
+				if err != nil {
+					return nil, err
+				}
+				records = append(records, near...)
+			}
 		}
-		records = append(records, found...)
 	}
 	return s.store.VideosOf(records), nil
 }

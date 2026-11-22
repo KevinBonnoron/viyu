@@ -18,7 +18,7 @@ a Viyu server you choose.
 - Live streams: LIVE badges, jump-to-live, read-only Twitch chat (live and VOD replay).
 - Channel profiles show provider-reported creation dates and public video totals; YouTube also supplies country and total views when available. Unknown metadata stays hidden, and existing profiles are enriched in the background.
 - Video comments with expandable reply threads; long comments and replies show four lines by default, with controls to read the full message or collapse it again.
-- Series inferred from YouTube and Twitch channel catalogs (and from Twitch collections), with seasons and next-episode playback.
+- Series inferred from YouTube and Twitch channel catalogs (and from Twitch collections), with seasons and next-episode playback. Recommendations prioritize the next eligible episode of a known series even outside series mode, without enabling autoplay, then favor videos from the watched video's publication period rather than today's newest uploads.
 - Search across the sources you enabled; paste a video or channel link to open it.
 - Global command palette (`Ctrl+Alt+P`, or `⌘+Option+P` on Mac): navigation, profile switching, theme, language and private playback; `Ctrl+K` / `⌘+K` opens content search directly.
 - New-video notifications, watch statistics, account export/import as JSON.

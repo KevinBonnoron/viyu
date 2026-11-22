@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,7 +133,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.store = catalog.New(app, registry, catalog.Options{})
 	f.accounts = accounts
-	f.svc = New(app, f.store, accounts, f.refresher)
+	f.svc = New(app, f.store, accounts, f.refresher, nil)
 	t.Cleanup(func() {
 		if _, err := os.Stat(f.ytdlpRan); err == nil {
 			t.Errorf("yt-dlp ran while serving a feed")
@@ -571,8 +572,7 @@ func TestRecommendationsAnchorOnCurrentVideo(t *testing.T) {
 	)
 	f.subscribeTo(profile, "UCsubscribed")
 
-	// The current video is excluded; the same-channel video ranks first, the shared-tag one before the off-topic one.
-	// Same age, so the presentation order is the ranking order.
+	// The current video is excluded; the same-channel video ranks first, followed by shared tags.
 	if got := f.recommend(owner, profile, ids["current"]); !reflect.DeepEqual(got, want(ids, "same-channel", "same-topic", "off-topic")) {
 		t.Fatalf("recommendations=%v", got)
 	}
@@ -621,6 +621,74 @@ func TestRecommendationsScoringIsScopedToProfile(t *testing.T) {
 	}
 }
 
+func TestRecommendationsRetrieveAndRankTheAnchorsPeriod(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	owner, other := f.user("reco-period@example.test"), f.user("reco-period-other@example.test")
+	profile := f.profile(owner, "Mine")
+	videos := []video{
+		{id: "anchor", channel: "UCanchor", published: "2017-09-10", tags: []string{"event"}},
+		{id: "own-neighbor", channel: "UCanchor", published: "2017-09-11", tags: []string{"event"}},
+		{id: "sub-neighbor", channel: "UCsub", published: "2017-09-12", tags: []string{"event"}},
+		{id: "private-neighbor", channel: "UCanchor", published: "2017-09-10", owner: other.Id},
+		{id: "watched-neighbor", channel: "UCanchor", published: "2017-09-10"},
+		{id: "restricted-neighbor", channel: "UCanchor", published: "2017-09-10", subscriberOnly: true},
+		{id: "disabled-neighbor", channel: "UCdisabled", published: "2017-09-10", platform: beta},
+	}
+	for i := range 305 {
+		videos = append(videos, video{id: fmt.Sprintf("new-%03d", i), channel: "UCanchor", published: "2024-01-01", tags: []string{"trend"}})
+		videos = append(videos, video{id: fmt.Sprintf("sub-new-%03d", i), channel: "UCsub", published: "2024-01-01"})
+	}
+	for i := range 25 {
+		videos = append(videos, video{id: fmt.Sprintf("liked-%02d", i), channel: "UCseed", tags: []string{"trend"}})
+	}
+	ids := f.put(videos...)
+	for i := range 25 {
+		f.like(profile, ids[fmt.Sprintf("liked-%02d", i)])
+	}
+	f.subscribeTo(profile, "UCsub")
+	disabled, err := f.store.FindChannel(beta, "UCdisabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.subscribe(profile, disabled)
+	if err := f.accounts.SetEnabled(owner.Id, beta, false); err != nil {
+		t.Fatal(err)
+	}
+	f.save("settings", map[string]any{"user": owner.Id, "hide_subscriber_only": true})
+	f.save("watch_history", map[string]any{"profile": profile.Id, "video": ids["watched-neighbor"], "watched_at": "2026-11-01 00:00:00.000Z"})
+
+	got, err := f.svc.Recommendations(context.Background(), owner.Id, profile.Id, ids["anchor"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The output itself, not merely the selected set, puts the old contextual videos first.
+	if len(got) != recommendationLimit || got[0].RecordID != ids["own-neighbor"] || got[1].RecordID != ids["sub-neighbor"] {
+		t.Fatalf("period ranking = %v", recordIDs(got))
+	}
+	for _, id := range []string{"private-neighbor", "watched-neighbor", "restricted-neighbor", "disabled-neighbor"} {
+		if slices.Contains(recordIDs(got), ids[id]) {
+			t.Fatalf("%s leaked into recommendations", id)
+		}
+	}
+}
+
+func TestRecommendationsWithoutAnchorDateUseGenericRecency(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	owner := f.user("reco-undated@example.test")
+	profile := f.profile(owner, "Mine")
+	ids := f.put(
+		video{id: "undated-2017", channel: "UCanchor"},
+		video{id: "old", channel: "UCsub", published: "2017-01-01"},
+		video{id: "new", channel: "UCsub", published: "2024-01-01"},
+	)
+	f.subscribeTo(profile, "UCsub")
+	if got := f.recommend(owner, profile, ids["undated-2017"]); !reflect.DeepEqual(got, want(ids, "new", "old")) {
+		t.Fatalf("undated anchor recommendations = %v", got)
+	}
+}
+
 func TestRecommendationsKeepTheTwentyBest(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -634,25 +702,5 @@ func TestRecommendationsKeepTheTwentyBest(t *testing.T) {
 	f.subscribeTo(profile, "UCmany")
 	if got := f.recommend(owner, profile, "neverseen00000"); len(got) != recommendationLimit {
 		t.Fatalf("%d recommendations, want %d", len(got), recommendationLimit)
-	}
-}
-
-func TestScoreVideo(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	old := platform.Video{Tags: []string{"a", "b"}, ChannelRecordID: "ch", Published: "2026-01-01"}
-	frequency := map[string]int{"a": 2}
-	if got := scoreVideo(old, frequency, nil, now); got != 5+4 {
-		t.Fatalf("base + liked tags: %v", got)
-	}
-	if got := scoreVideo(old, frequency, &anchor{channelRecordID: "ch", tags: []string{"b"}}, now); got != 5+4+3+10 {
-		t.Fatalf("anchor tag and channel: %v", got)
-	}
-	recent := platform.Video{Published: now.Add(-24 * time.Hour).Format(time.RFC3339)}
-	if got := scoreVideo(recent, nil, nil, now); !(got > 5+8 && got < 5+10) {
-		t.Fatalf("recency boost of a day-old video: %v", got)
-	}
-	if got := scoreVideo(platform.Video{Published: "not a date"}, nil, nil, now); got != 5 {
-		t.Fatalf("an unparsable date gives no boost: %v", got)
 	}
 }
