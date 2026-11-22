@@ -1,11 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <title>Viyu</title>
   <defs>
-    <linearGradient id="viyu-accent" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f4b942"/>
+    <linearGradient id="viyu-accent" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd25e"/>
+      <stop offset=".45" stop-color="#f4b942"/>
       <stop offset="1" stop-color="#e69a27"/>
     </linearGradient>
+    <linearGradient id="viyu-sheen" x1="6" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".4"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="viyu-rim" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".4"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#a8650c" stop-opacity=".3"/>
+    </linearGradient>
+    <clipPath id="viyu-play-clip">
+      <path d="M22 20.5V43.5A3 3 0 0 0 26.44 46.13L47.44 34.63A3 3 0 0 0 47.44 29.37L26.44 17.87A3 3 0 0 0 22 20.5Z"/>
+    </clipPath>
   </defs>
   <rect width="64" height="64" rx="17" fill="url(#viyu-accent)"/>
-  <path d="M27 18.5 48 32 27 45.5Z" fill="#181818"/>
+  <rect width="64" height="64" rx="17" fill="url(#viyu-sheen)"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="16.25" fill="none" stroke="url(#viyu-rim)" stroke-width="1.5"/>
+  <path d="M22 20.5V43.5A3 3 0 0 0 26.44 46.13L47.44 34.63A3 3 0 0 0 47.44 29.37L26.44 17.87A3 3 0 0 0 22 20.5Z" fill="#8a4f0a" opacity=".3" transform="translate(0 1.8)"/>
+  <path d="M22 20.5V43.5A3 3 0 0 0 26.44 46.13L47.44 34.63A3 3 0 0 0 47.44 29.37L26.44 17.87A3 3 0 0 0 22 20.5Z" fill="#181818"/>
+  <path d="M18 14H52V32H18Z" fill="#fff" opacity=".13" clip-path="url(#viyu-play-clip)"/>
+  <path d="M45.5 14.5C45.8 16.7 46.8 17.7 49 18 46.8 18.3 45.8 19.3 45.5 21.5 45.2 19.3 44.2 18.3 42 18 44.2 17.7 45.2 16.7 45.5 14.5Z" fill="#fff6dc"/>
+  <path d="M17 45.2C17.15 46.1 17.6 46.55 18.5 46.7 17.6 46.85 17.15 47.3 17 48.2 16.85 47.3 16.4 46.85 15.5 46.7 16.4 46.55 16.85 46.1 17 45.2Z" fill="#fff6dc" opacity=".8"/>
 </svg>

@@ -1,11 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Viyu play mark (apps/client/public/favicon.svg), scaled into the adaptive icon safe zone. -->
+<!-- Viyu play mark (apps/client/public/favicon.svg), scaled into the adaptive icon safe zone: x' = 1.5x + 6, y' = 1.5y + 6. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <group android:translateY="2.7">
+        <path
+            android:fillColor="#8A4F0A"
+            android:fillAlpha="0.3"
+            android:pathData="M39,36.75V71.25A4.5,4.5 0 0 0 45.66,75.2L77.16,57.95A4.5,4.5 0 0 0 77.16,50.06L45.66,32.8A4.5,4.5 0 0 0 39,36.75Z" />
+    </group>
     <path
         android:fillColor="@color/viyu_ink"
-        android:pathData="M46.5,33.75L78,54L46.5,74.25Z" />
+        android:pathData="M39,36.75V71.25A4.5,4.5 0 0 0 45.66,75.2L77.16,57.95A4.5,4.5 0 0 0 77.16,50.06L45.66,32.8A4.5,4.5 0 0 0 39,36.75Z" />
+    <group>
+        <clip-path android:pathData="M39,36.75V71.25A4.5,4.5 0 0 0 45.66,75.2L77.16,57.95A4.5,4.5 0 0 0 77.16,50.06L45.66,32.8A4.5,4.5 0 0 0 39,36.75Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.13"
+            android:pathData="M33,27H84V54H33Z" />
+    </group>
+    <path
+        android:fillColor="#FFF6DC"
+        android:pathData="M74.25,27.75C74.7,31.05 76.2,32.55 79.5,33 76.2,33.45 74.7,34.95 74.25,38.25 73.8,34.95 72.3,33.45 69,33 72.3,32.55 73.8,31.05 74.25,27.75Z" />
 </vector>
