@@ -7,6 +7,7 @@ import { SeriesEpisodeList, SeriesSyncStatus } from '@/components/series';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SidePanel, type SidePanelSection } from '@/features/video/components/side-panel';
+import { SponsorSkipNotice } from '@/features/video/components/sponsor-skip-notice';
 import { VideoChat } from '@/features/video/components/video-chat';
 import { VideoComments } from '@/features/video/components/video-comments';
 import { VideoControls } from '@/features/video/components/video-controls';
@@ -23,6 +24,7 @@ import { usePlayerFullscreen } from '@/features/video/hooks/use-player-fullscree
 import { usePlayerLayout, useSidePanelPlacement } from '@/features/video/hooks/use-player-layout';
 import { useRecommendations } from '@/features/video/hooks/use-recommendations';
 import { useResumePosition } from '@/features/video/hooks/use-resume-position';
+import { useSponsorSkip } from '@/features/video/hooks/use-skip-notice';
 import { useSourceWatch } from '@/features/video/hooks/use-source-watch';
 import { useSponsorSegments } from '@/features/video/hooks/use-sponsor-segments';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
@@ -170,6 +172,12 @@ function VideoPlayer({
   const { fullscreen, immersive } = playerFullscreen;
   const playerMaxHeight = usePlayerLayout(frameRef, informationRef, fullscreen, [videoMeta, source, canMarkWatched, privatePlayback]);
   useKeepAwake(videoRef, streamVersion);
+  const { noticeVisible, skip: skipSponsor } = useSponsorSkip({
+    videoRef,
+    version: streamVersion,
+    pending: sponsorSkipPending,
+    clearActive: setActiveSponsorSegment,
+  });
 
   const sponsorSegments = useSponsorSegments(videoMeta?.platform === 'youtube' ? nativeId : undefined);
   const channelProfile = useChannelProfile(videoMeta?.channelId || null);
@@ -361,16 +369,6 @@ function VideoPlayer({
     },
     [moveResumeTo],
   );
-
-  const skipSponsor = useCallback((segment: SponsorSegment) => {
-    const video = videoRef.current;
-    if (!video || sponsorSkipPending.current) {
-      return;
-    }
-    sponsorSkipPending.current = true;
-    setActiveSponsorSegment(null);
-    video.currentTime = Math.min(segment.end, Number.isFinite(video.duration) ? video.duration : segment.end);
-  }, []);
 
   const updateSponsorSegment = useCallback(() => {
     const video = videoRef.current;
@@ -607,6 +605,7 @@ function VideoPlayer({
                 {t('player.controls.unmute')}
               </Button>
             )}
+            <SponsorSkipNotice visible={noticeVisible && !playerError && !showEndScreen} fullscreen={fullscreen} />
             {ended && !playerError && endKind === 'next' && nextEpisode && (
               <NextEpisodeCard
                 key={videoId}

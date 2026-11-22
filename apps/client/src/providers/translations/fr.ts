@@ -188,6 +188,7 @@ export const fr = {
     'Auto choisit toujours la meilleure qualité disponible. Une résolution fixe utilise la meilleure qualité disponible jusqu’à cette limite.',
   'player.controls.player': 'Lecteur vidéo Viyu',
   'player.sponsor.skip': 'Passer la publicité',
+  'player.sponsor.skipped': 'Publicité passée',
   'player.controls.play': 'Lire',
   'player.controls.pause': 'Mettre en pause',
   'player.controls.next': 'Épisode suivant',

@@ -185,6 +185,7 @@ export const en = {
     'Auto always chooses the highest available quality. A fixed resolution uses the best available quality up to that limit.',
   'player.controls.player': 'Viyu video player',
   'player.sponsor.skip': 'Skip sponsor',
+  'player.sponsor.skipped': 'Ad skipped',
   'player.controls.play': 'Play',
   'player.controls.pause': 'Pause',
   'player.controls.next': 'Next episode',
