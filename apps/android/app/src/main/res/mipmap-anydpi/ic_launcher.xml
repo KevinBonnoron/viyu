@@ -7,7 +7,23 @@
     <path
         android:fillColor="@color/ic_launcher_background"
         android:pathData="M17,0H47A17,17 0 0 1 64,17V47A17,17 0 0 1 47,64H17A17,17 0 0 1 0,47V17A17,17 0 0 1 17,0Z" />
+    <group android:translateY="1.8">
+        <path
+            android:fillColor="#8A4F0A"
+            android:fillAlpha="0.3"
+            android:pathData="M22,20.5V43.5A3,3 0 0 0 26.44,46.13L47.44,34.63A3,3 0 0 0 47.44,29.37L26.44,17.87A3,3 0 0 0 22,20.5Z" />
+    </group>
     <path
         android:fillColor="@color/viyu_ink"
-        android:pathData="M27,18.5L48,32L27,45.5Z" />
+        android:pathData="M22,20.5V43.5A3,3 0 0 0 26.44,46.13L47.44,34.63A3,3 0 0 0 47.44,29.37L26.44,17.87A3,3 0 0 0 22,20.5Z" />
+    <group>
+        <clip-path android:pathData="M22,20.5V43.5A3,3 0 0 0 26.44,46.13L47.44,34.63A3,3 0 0 0 47.44,29.37L26.44,17.87A3,3 0 0 0 22,20.5Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.13"
+            android:pathData="M18,14H52V32H18Z" />
+    </group>
+    <path
+        android:fillColor="#FFF6DC"
+        android:pathData="M45.5,14.5C45.8,16.7 46.8,17.7 49,18 46.8,18.3 45.8,19.3 45.5,21.5 45.2,19.3 44.2,18.3 42,18 44.2,17.7 45.2,16.7 45.5,14.5Z" />
 </vector>
