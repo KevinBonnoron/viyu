@@ -17,7 +17,8 @@ import {
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioOption } from '@/features/video/utils/audio-tracks';
 import { currentChapter, timelineChapters } from '@/features/video/utils/chapters';
-import { keyFocus, OPEN_OVERLAY, playerKeyAction } from '@/features/video/utils/player-keys';
+import { PLAYBACK_DOUBLE_CLICK_WINDOW, PlaybackClickSequence } from '@/features/video/utils/playback-clicks';
+import { keyFocus, OPEN_OVERLAY, playerKeyAction, SEEK_STEP } from '@/features/video/utils/player-keys';
 import { cn, formatDuration } from '@/lib/utils';
 import { useI18n } from '@/providers/i18n-provider';
 import { usePlaybackPrivacy } from '@/providers/playback-privacy-provider';
@@ -25,6 +26,8 @@ import type { VideoChapter } from '@/types';
 
 type SettingsSection = 'quality' | 'audio' | 'speed';
 const playbackRates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+const DOUBLE_TAP_WINDOW = 350;
+const SURFACE_CONTROLS = 'button, input, a, [role="menu"], [data-chapters], [data-player-controls], [data-player-topbar]';
 /** How far behind the live edge playback can be before it counts as "not live" and offers a way back, in seconds. hls.js itself starts a stream 10 to 20 seconds behind its edge. */
 const LIVE_EDGE_TOLERANCE = 25;
 
@@ -148,6 +151,24 @@ export function VideoControls({
   const [menuPage, setMenuPage] = useState<'root' | SettingsSection>('root');
   const previousSection = useRef<SettingsSection>('quality');
   const playbackRate = useRef(1);
+  // The first tap can enter native fullscreen and rebind the handlers before the second tap arrives.
+  const lastTap = useRef<{ right: boolean; time: number } | null>(null);
+  const [mouseClicks] = useState(() => new PlaybackClickSequence());
+  const [clickIcon, setClickIcon] = useState<{ paused: boolean } | null>(null);
+  useEffect(() => {
+    if (clickIcon === null) {
+      return;
+    }
+    const timer = window.setTimeout(() => setClickIcon(null), PLAYBACK_DOUBLE_CLICK_WINDOW);
+    return () => window.clearTimeout(timer);
+  }, [clickIcon]);
+  const pointerKind = useRef('');
+  const suppressSurfaceClick = useRef(false);
+  useEffect(() => {
+    lastTap.current = null;
+    mouseClicks.reset();
+    setClickIcon(null);
+  }, [version, endScreen, touch, mouseClicks]);
   const [actionError, setActionError] = useState(false);
   const { privatePlayback, setPrivatePlayback } = usePlaybackPrivacy();
   /** The confirmation shown briefly after the viewer switches private playback from the controls. */
@@ -195,26 +216,36 @@ export function VideoControls({
   useEffect(() => {
     nextRef.current = onNext;
   }, [onNext]);
+  const setPlayback = useCallback(
+    (paused: boolean) => {
+      const video = videoRef.current;
+      if (!video) {
+        return;
+      }
+      setActionError(false);
+      onPlaybackIntentChange(paused);
+      if (paused) {
+        video.pause();
+      } else if (video.paused) {
+        if (video.ended) {
+          video.currentTime = 0;
+        }
+        // pause() rejects a pending play() with AbortError; that is a change of mind, not a failure.
+        void video.play().catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) {
+            setActionError(true);
+          }
+        });
+      }
+    },
+    [videoRef, onPlaybackIntentChange],
+  );
   const playPause = useCallback(() => {
     const video = videoRef.current;
-    if (!video) {
-      return;
+    if (video) {
+      setPlayback(!video.paused);
     }
-    setActionError(false);
-    onPlaybackIntentChange(!video.paused);
-    if (video.paused) {
-      if (video.ended) {
-        video.currentTime = 0;
-      }
-      void video.play().catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setActionError(true);
-        }
-      });
-    } else {
-      video.pause();
-    }
-  }, [videoRef, onPlaybackIntentChange]);
+  }, [videoRef, setPlayback]);
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -265,6 +296,13 @@ export function VideoControls({
     if (!video || !frame) {
       return;
     }
+    let press: {
+      id: number;
+      pointerType: string;
+      x: number;
+      y: number;
+      time: number;
+    } | null = null;
     video.playbackRate = playbackRate.current;
     const synchronize = () => {
       const duration =
@@ -282,8 +320,37 @@ export function VideoControls({
         buffered: Array.from({ length: video.buffered.length }, (_, index) => ({ start: video.buffered.start(index), end: video.buffered.end(index) })),
       });
     };
+    const seekBy = (seconds: number) => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : knownDuration;
+      if (duration > 0) {
+        const time = video.readyState > 0 ? video.currentTime : resumePosition;
+        onSeek(Math.max(0, Math.min(duration, time + seconds)));
+        synchronize();
+      }
+    };
+    const forgetTaps = () => {
+      lastTap.current = null;
+      mouseClicks.reset();
+    };
+    const seekSide = (right: boolean, restorePaused?: boolean) => {
+      forgetTaps();
+      if (restorePaused !== undefined) {
+        // The first click already toggled playback; seeking must leave it as it was before that click.
+        setPlayback(restorePaused);
+      }
+      seekBy(right ? SEEK_STEP : -SEEK_STEP);
+      reveal();
+    };
+    const cancelGesture = () => {
+      if (press) {
+        suppressSurfaceClick.current = true;
+      }
+      press = null;
+      forgetTaps();
+      setClickIcon(null);
+    };
     const enter = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' || !hoverPointer.matches) {
+      if (touch || event.pointerType === 'touch' || !hoverPointer.matches) {
         return;
       }
       inputType.current = event.pointerType;
@@ -291,34 +358,131 @@ export function VideoControls({
       reveal();
     };
     const pointerDown = (event: PointerEvent) => {
-      inputType.current = event.pointerType;
+      pointerKind.current = event.pointerType;
+      inputType.current = touch ? 'touch' : event.pointerType;
       setControlsFocused(false);
-      if (event.pointerType !== 'touch') {
-        enter(event);
-      } else {
+      if (touch || event.pointerType === 'touch') {
         frameHovered.current = false;
         controlsHover.current = false;
-        if (event.target !== video) {
+      } else {
+        enter(event);
+      }
+      const control = event.target instanceof Element && !!event.target.closest(SURFACE_CONTROLS);
+      if (!event.isPrimary || event.button !== 0 || control || press) {
+        cancelGesture();
+        if (control) {
+          reveal();
+        }
+        return;
+      }
+      suppressSurfaceClick.current = false;
+      const start = { id: event.pointerId, pointerType: event.pointerType, x: event.clientX, y: event.clientY, time: event.timeStamp };
+      press = start;
+    };
+    const pointerMove = (event: PointerEvent) => {
+      if (press?.id === event.pointerId && (event.buttons === 0 || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 12)) {
+        cancelGesture();
+      }
+    };
+    const pointerUp = (event: PointerEvent) => {
+      if (press?.id !== event.pointerId) {
+        return;
+      }
+      const start = press;
+      press = null;
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) {
+        suppressSurfaceClick.current = true;
+        forgetTaps();
+        return;
+      }
+      const mobileInput = touch || start.pointerType === 'touch';
+      if (mobileInput && event.timeStamp - start.time > DOUBLE_TAP_WINDOW) {
+        suppressSurfaceClick.current = true;
+        forgetTaps();
+        return;
+      }
+      if (start.pointerType !== 'touch') {
+        // Mouse and pen are answered by the native click and dblclick events.
+        return;
+      }
+      const rect = frame.getBoundingClientRect();
+      const right = event.clientX >= rect.left + rect.width / 2;
+      const previous = lastTap.current;
+      if (previous?.right === right && event.timeStamp - previous.time <= DOUBLE_TAP_WINDOW) {
+        suppressSurfaceClick.current = true;
+        seekSide(right);
+      } else {
+        lastTap.current = { right, time: event.timeStamp };
+        if (visibleRef.current) {
+          hide();
+        } else {
           reveal();
         }
       }
     };
+    const doubleClickFrame = (event: MouseEvent) => {
+      if (event.button !== 0 || (event.target instanceof Element && event.target.closest(SURFACE_CONTROLS))) {
+        return;
+      }
+      // Touch double taps are recognised on pointerup and have already seeked.
+      if (event.detail !== 0 && pointerKind.current === 'touch') {
+        return;
+      }
+      const restorePaused = mouseClicks.doubleClick();
+      if (restorePaused === null) {
+        return;
+      }
+      event.preventDefault();
+      const rect = frame.getBoundingClientRect();
+      seekSide(event.clientX >= rect.left + rect.width / 2, restorePaused);
+    };
+    const cancelPointer = (event: PointerEvent) => {
+      if (press?.id === event.pointerId) {
+        cancelGesture();
+      }
+    };
+    const visibilityChanged = () => {
+      if (document.hidden) {
+        cancelGesture();
+      }
+    };
     const leave = (event: PointerEvent) => {
-      if (event.pointerType !== 'touch' && hoverPointer.matches && !scrubbing.current) {
-        hide();
+      if (event.pointerType !== 'touch') {
+        if (press) {
+          cancelGesture();
+        }
+        if (hoverPointer.matches && !scrubbing.current) {
+          hide();
+        }
       }
     };
     const clickFrame = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('button, input, a, [role="menu"], [data-chapters]')) {
+      if (event.target instanceof Element && event.target.closest(SURFACE_CONTROLS)) {
         return;
       }
-      if (inputType.current === 'touch') {
+      if (suppressSurfaceClick.current) {
+        // A cancelled press must not become a click (including the phone's fullscreen upgrade).
+        suppressSurfaceClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      // A touch is answered on pointerup; the click only follows it. Synthetic and assistive clicks (detail 0) are never touches.
+      if (event.detail !== 0 && pointerKind.current === 'touch') {
+        return;
+      }
+      if (!mouseClicks.click(event, video.paused)) {
+        return;
+      }
+      if (touch) {
         if (visibleRef.current) {
           hide();
         } else {
           reveal();
         }
       } else {
+        // Playback acts now; keep only its icon stable while the native click pair is being classified.
+        setClickIcon(event.detail === 0 ? null : { paused: video.paused });
         playPause();
       }
     };
@@ -344,6 +508,7 @@ export function VideoControls({
       if (!action) {
         return;
       }
+      cancelGesture();
       event.preventDefault();
       spaceTaken.current = event.key === ' ' || event.key === 'Spacebar';
       switch (action.type) {
@@ -365,15 +530,9 @@ export function VideoControls({
         case 'volume':
           changeVolume(video, action.delta);
           break;
-        case 'seek': {
-          const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : knownDuration;
-          if (duration > 0) {
-            const time = video.readyState > 0 ? video.currentTime : resumePosition;
-            onSeek(Math.max(0, Math.min(duration, time + action.seconds)));
-            synchronize();
-          }
+        case 'seek':
+          seekBy(action.seconds);
           break;
-        }
         default:
       }
       reveal();
@@ -402,12 +561,19 @@ export function VideoControls({
     for (const event of events) {
       video.addEventListener(event, synchronize);
     }
-    frame.addEventListener('click', clickFrame);
+    frame.addEventListener('click', clickFrame, true);
+    frame.addEventListener('dblclick', doubleClickFrame);
     video.addEventListener('play', revealInside);
     video.addEventListener('playing', revealInside);
     frame.addEventListener('pointerenter', enter);
     frame.addEventListener('pointermove', enter);
     frame.addEventListener('pointerdown', pointerDown);
+    window.addEventListener('pointermove', pointerMove);
+    window.addEventListener('pointerup', pointerUp);
+    window.addEventListener('pointercancel', cancelPointer);
+    window.addEventListener('lostpointercapture', cancelPointer);
+    window.addEventListener('blur', cancelGesture);
+    document.addEventListener('visibilitychange', visibilityChanged);
     frame.addEventListener('pointerleave', leave);
     frame.addEventListener('focusin', focusInside);
     window.addEventListener('keydown', keyboard, true);
@@ -418,16 +584,28 @@ export function VideoControls({
       reveal();
     }
     return () => {
+      if (press) {
+        suppressSurfaceClick.current = true;
+        forgetTaps();
+      }
+      press = null;
       clearTimeout(hideTimer.current);
       for (const event of events) {
         video.removeEventListener(event, synchronize);
       }
-      frame.removeEventListener('click', clickFrame);
+      frame.removeEventListener('click', clickFrame, true);
+      frame.removeEventListener('dblclick', doubleClickFrame);
       video.removeEventListener('play', revealInside);
       video.removeEventListener('playing', revealInside);
       frame.removeEventListener('pointerenter', enter);
       frame.removeEventListener('pointermove', enter);
       frame.removeEventListener('pointerdown', pointerDown);
+      window.removeEventListener('pointermove', pointerMove);
+      window.removeEventListener('pointerup', pointerUp);
+      window.removeEventListener('pointercancel', cancelPointer);
+      window.removeEventListener('lostpointercapture', cancelPointer);
+      window.removeEventListener('blur', cancelGesture);
+      document.removeEventListener('visibilitychange', visibilityChanged);
       frame.removeEventListener('pointerleave', leave);
       frame.removeEventListener('focusin', focusInside);
       window.removeEventListener('keydown', keyboard, true);
@@ -438,6 +616,7 @@ export function VideoControls({
     frameRef,
     version,
     playPause,
+    setPlayback,
     toggleMute,
     toggleFullscreen,
     reveal,
@@ -448,6 +627,9 @@ export function VideoControls({
     language,
     hoverPointer,
     endScreen,
+    fullscreen,
+    touch,
+    mouseClicks,
   ]);
 
   useEffect(() => {
@@ -1012,7 +1194,11 @@ export function VideoControls({
               onClick={playPause}
               className={buttonClass}
             >
-              {media.paused ? <Play aria-hidden="true" className="size-5 fill-current" /> : <Pause aria-hidden="true" className="size-5 fill-current" />}
+              {(clickIcon?.paused ?? media.paused) ? (
+                <Play aria-hidden="true" className="size-5 fill-current" />
+              ) : (
+                <Pause aria-hidden="true" className="size-5 fill-current" />
+              )}
             </button>
           )}
           {!touch && onNext && (
