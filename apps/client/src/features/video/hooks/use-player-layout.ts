@@ -91,7 +91,8 @@ export function useSidePanelPlacement(rootRef: RefObject<HTMLElement | null>): '
     }
     const update = () => {
       const bounds = root.getBoundingClientRect();
-      const available = window.innerHeight - Math.max(0, bounds.top) - INFORMATION_ROW;
+      // Closing a panel can move the scroll anchor; that must not change which side of the video its rail occupies.
+      const available = window.innerHeight - Math.max(0, bounds.top + window.scrollY) - INFORMATION_ROW;
       setPlacement(decideBeside(bounds.width, available) ? 'beside' : 'stacked');
     };
     update();
