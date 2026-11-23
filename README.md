@@ -90,6 +90,8 @@ task dev            # Go + PocketBase on 127.0.0.1:8090, Vite on http://localhos
 
 Vite waits for `/api/health` (up to two minutes), then proxies `/api` and `/_` to the Go server. Run `task` to list all tasks.
 
+Server tests run packages serially (`-p 1`) while retaining parallel tests and the race detector within each package, so SQLite fixtures do not multiply the CPU budget across packages. Fixtures copy a closed, migrated schema into independent database files; migration-specific tests still apply the migrations themselves.
+
 ## Configuration
 
 Environment variables read by the code. The standalone `viyu` executable only reads the process environment; Docker

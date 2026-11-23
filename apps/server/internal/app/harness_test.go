@@ -50,9 +50,13 @@ func offlineOptions(dir string) Options {
 // the test ends.
 func newApp(t *testing.T, mutate ...func(*Options)) (*pocketbase.PocketBase, http.Handler) {
 	t.Helper()
-	opts := offlineOptions(t.TempDir())
+	dir := t.TempDir()
+	opts := offlineOptions(dir)
 	for _, change := range mutate {
 		change(&opts)
+	}
+	if opts.DataDir == dir {
+		testutil.CopySchemaFixture(t, dir)
 	}
 	app := New(opts)
 	if err := app.Bootstrap(); err != nil {
