@@ -141,7 +141,7 @@ function HistoryPages({ profileId }: { profileId: string }) {
         showProgress
         onEndReached={hasNextPage && !isFetchingNextPage ? () => void fetchNextPage() : undefined}
       />
-      {isFetchingNextPage && <VideoGridSkeleton />}
+      {isFetchingNextPage && <VideoGridSkeleton fillViewport={false} />}
       {confirmClear && (
         <ConfirmDialog
           title={t('history.clearAll')}

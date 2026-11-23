@@ -168,7 +168,7 @@ export function SubscriptionVideoPages({
       {(loading || (refreshing && shown.length === 0)) && (
         <div aria-live="polite" aria-busy="true">
           <span className="sr-only">{t(shown.length === 0 ? 'subscriptions.loading' : 'search.moreLoading')}</span>
-          <VideoGridSkeleton />
+          <VideoGridSkeleton fillViewport={shown.length === 0} />
         </div>
       )}
       {failed && (

@@ -161,7 +161,7 @@ function ConnectedFeed({ platform, kind }: { platform: string; kind: SourceFeedK
       {loading && (
         <div aria-live="polite" aria-busy="true" className="space-y-4">
           <span className={kind === 'home' ? 'sr-only' : 'text-xs text-muted-foreground'}>{t('sourceFeed.loading', { name, kind: kindLabel })}</span>
-          <VideoGridSkeleton />
+          <VideoGridSkeleton fillViewport={videos.length === 0} />
         </div>
       )}
       {error && (

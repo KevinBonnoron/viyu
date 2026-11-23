@@ -11,7 +11,7 @@ a Viyu server you choose.
 
 ## Features
 
-- Subscribe to YouTube, Twitch and PeerTube channels; one feed, one subscriptions timeline, history, likes and "not interested".
+- Subscribe to YouTube, Twitch and PeerTube channels; one feed, one subscriptions timeline, history, likes and "not interested". Initial loading fills the available viewport; pagination adds one placeholder row matching the grid's columns.
 - Accounts with several profiles; each profile has its own subscriptions, history, reactions, home feed and accent colour. Subscriptions can be moved from one profile to another (to split a catch-all profile), creator groups travelling whole.
 - Own HLS player: quality, audio language, speed, chapters, resume, SponsorBlock skipping with an in-player confirmation during loading, private playback and uniformly sized compact action buttons; fullscreen shows the video title alongside the controls. Channel, metadata and actions use separate rows when the player is narrow. Details stay beside the player from 960px of available page width and stack below on narrower screens.
 - Automatic playback quality adapts to bandwidth and shows the resolution actually playing (for example, `Auto · 720p`), including during quality changes; a fixed resolution keeps its selected limit separate from the current rendition.

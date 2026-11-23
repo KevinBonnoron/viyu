@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 
-export function VideoGridSkeleton() {
+export function VideoGridSkeleton({ fillViewport = true }: { fillViewport?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(1);
   useLayoutEffect(() => {
@@ -12,6 +12,10 @@ export function VideoGridSkeleton() {
     const update = () => {
       const style = getComputedStyle(element);
       const columns = Math.max(1, style.gridTemplateColumns.split(' ').filter(Boolean).length);
+      if (!fillViewport) {
+        setCount(columns);
+        return;
+      }
       const height = element.firstElementChild?.getBoundingClientRect().height ?? 0;
       const gap = Number.parseFloat(style.rowGap) || 0;
       if (height <= 0) {
@@ -28,7 +32,7 @@ export function VideoGridSkeleton() {
       observer.disconnect();
       window.removeEventListener('resize', update);
     };
-  }, []);
+  }, [fillViewport]);
   return (
     <div ref={root} className="media-grid" aria-hidden="true">
       {Array.from({ length: count }, (_, position) => (

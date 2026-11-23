@@ -212,19 +212,14 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
           </Button>
         </div>
       )}
-      {pending && combined.length === 0 && (
-        <div className="space-y-4">
-          <FilterSkeleton />
-          <VideoGridSkeleton />
-        </div>
-      )}
+      {pending && combined.length === 0 && <FilterSkeleton />}
       {(rest.length > 0 || more.length > 0) && (
         <VideoGrid videos={rest} historyActions loadWhenEmpty onEndReached={more.length > 0 && !feedPending ? loadMore : undefined} />
       )}
       {pending && (
         <div aria-live="polite" aria-busy="true" className="space-y-4">
           <span className="sr-only">{t('feed.loading')}</span>
-          <VideoGridSkeleton />
+          <VideoGridSkeleton fillViewport={combined.length === 0} />
         </div>
       )}
       {!pending && !hasErrors && combined.length === 0 && resume.items.length === 0 && (

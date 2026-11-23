@@ -70,7 +70,7 @@ function LikedVideos({ profileId }: { profileId: string }) {
   return data.length > 0 ? (
     <>
       <SavedVideoGrid entries={entries} onEndReached={hasNextPage && !isFetchingNextPage ? () => void fetchNextPage() : undefined} />
-      {isFetchingNextPage && <VideoGridSkeleton />}
+      {isFetchingNextPage && <VideoGridSkeleton fillViewport={false} />}
     </>
   ) : (
     <EmptyState icon={Heart} title={t('likes.emptyTitle')} description={t('ui.library.likesEmptyDescription')}>
