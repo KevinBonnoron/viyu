@@ -16,6 +16,7 @@ func (s *Server) registerContent(api Routes) {
 	api.GET("/api/video/{videoId}/url", s.videoURL)
 	api.GET("/api/video/{videoId}/comments", s.videoComments)
 	api.GET("/api/channel/{id}", s.channel)
+	api.GET("/api/channel/{id}/series", s.channelSeries)
 	api.GET("/api/channel/{id}/live", s.channelLive)
 	api.GET("/api/subscriptions/live", s.subscriptionsLive)
 	api.GET("/api/chat/live/{login}", s.chatLive)

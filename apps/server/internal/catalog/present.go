@@ -110,6 +110,32 @@ func (s *Store) CachedChannelVideos(channelRecordID, userID string) ([]platform.
 	return s.VideosOf(visible), nil
 }
 
+// CachedChannelVideoPage reads a bounded page of the unexpired cached channel listing.
+func (s *Store) CachedChannelVideoPage(channelID, userID string, page, limit int, ascending bool) ([]platform.Video, int, error) {
+	params := dbx.Params{"id": channelID, "now": time.Now().UTC().Format(platform.StoredLayout), "user": userID}
+	visibility := "json_array_length(COALESCE(NULLIF(v.owners, ''), '[]')) = 0 OR EXISTS (SELECT 1 FROM json_each(v.owners) WHERE value = {:user} AND {:user} != '')"
+	var total int
+	err := s.app.DB().NewQuery("SELECT COUNT(*) FROM videos v WHERE v.channel = {:id} AND v.expires_at > {:now} AND (" + visibility + ")").Bind(params).Row(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+	records := []*core.Record{}
+	order := "videos.published DESC"
+	if ascending {
+		order = "videos.published ASC"
+	}
+	if page-1 <= total/limit {
+		err = s.app.RecordQuery(videos).
+			AndWhere(dbx.NewExp("[[videos.channel]] = {:id} AND [[videos.expires_at]] > {:now}", params)).
+			AndWhere(dbx.NewExp("json_array_length(COALESCE(NULLIF([[videos.owners]], ''), '[]')) = 0 OR EXISTS (SELECT 1 FROM json_each([[videos.owners]]) WHERE value = {:user} AND {:user} != '')", params)).
+			OrderBy("CASE WHEN [[videos.published]] IS NULL OR [[videos.published]] = '' THEN 1 ELSE 0 END", order, "videos.platform_id").Limit(int64(limit)).Offset(int64((page - 1) * limit)).All(&records)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return s.VideosOf(records), total, nil
+}
+
 // CachedAnswer presents a stored video that may answer a request for its details without asking the
 // platform: its metadata was verified, it has its chapters when wantChapters, it is fresh, and it is not a
 // stream in progress (that one is only true right now).

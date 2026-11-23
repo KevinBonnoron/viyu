@@ -136,3 +136,42 @@ func TestConnectedChannelCatalogOwnsItsCookiesAndEndsWithItsConnection(t *testin
 		}
 	}
 }
+
+func TestConnectedChannelCatalogPaging(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	csyncMarker(t, state, "release")
+	app, handler := newApp(t, csyncOptions(t, state)...)
+	yt := testPlatforms().Default().ID()
+	owner := testUser(t, app, "paging-connected@example.test")
+	token := tokenOf(t, owner)
+	channelID := storedChannel(t, app, yt, serChannel("catalog"), "Catalog channel")
+	path := "/api/channel/" + channelID + "?sync=1&source=" + yt
+	csyncConnect(t, handler, token, "paging-secret")
+	csyncWait(t, handler, path, token, func(a jobs.Catalog) bool { return a.Sync.Status == jobs.Complete })
+	readPage := func(suffix string) jobs.CatalogPage {
+		t.Helper()
+		res := request(t, handler, path+suffix, token)
+		acctExpect(t, res, http.StatusOK, "")
+		var page jobs.CatalogPage
+		acctDecode(t, res, &page)
+		return page
+	}
+	first, second := readPage(""), readPage("&page=2")
+	if len(first.Videos) != 30 || len(second.Videos) != 30 || first.Sync.Loaded != 65 || second.Total != 65 || !first.HasMore {
+		t.Fatalf("connected pages: %+v %+v", first, second)
+	}
+	seen := map[string]bool{}
+	for _, page := range []jobs.CatalogPage{first, second} {
+		for _, video := range page.Videos {
+			if seen[video.ID] || video.Source != yt {
+				t.Fatalf("invalid connected video: %+v", video)
+			}
+			seen[video.ID] = true
+		}
+	}
+	search := readPage("&q=listing%20title%2065")
+	if search.Total != 1 || search.Sync.Loaded != 65 || len(search.Videos) != 1 {
+		t.Fatalf("connected search: %+v", search)
+	}
+}

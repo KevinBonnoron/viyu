@@ -203,6 +203,70 @@ func (s *Store) ForChannels(channelRecordIDs []string) (map[string][]Series, err
 	return out, nil
 }
 
+// ChannelSummariesData reads only the fields needed to order and summarize a channel's series.
+func (s *Store) ChannelSummariesData(channel *core.Record) ([]Series, error) {
+	records, err := s.app.FindRecordsByFilter(seriesCollection, "channel = {:channel}", "name,id", 0, 0, dbx.Params{"channel": channel.Id})
+	if err != nil {
+		return nil, loadFailed(err)
+	}
+	type member struct {
+		Series    string `db:"series_id"`
+		ID        string `db:"id"`
+		NativeID  string `db:"native_id"`
+		Title     string `db:"title"`
+		Original  string `db:"original"`
+		Verified  bool   `db:"verified"`
+		Thumbnail string `db:"thumbnail"`
+		Published string `db:"published"`
+	}
+	members := []member{}
+	err = s.app.DB().NewQuery(`
+		SELECT s.id AS series_id, v.id AS id, v.platform_id AS native_id,
+			COALESCE(json_extract(CASE WHEN json_valid(v.titles) THEN v.titles ELSE '{}' END, '$.en'), json_extract(CASE WHEN json_valid(v.titles) THEN v.titles ELSE '{}' END, '$.original'), '') AS title,
+			COALESCE(json_extract(CASE WHEN json_valid(v.titles) THEN v.titles ELSE '{}' END, '$.original'), json_extract(CASE WHEN json_valid(v.titles) THEN v.titles ELSE '{}' END, '$.en'), '') AS original,
+			COALESCE(json_extract(CASE WHEN json_valid(v.metadata) THEN v.metadata ELSE '{}' END, '$.original_title_verified'), 0) AS verified,
+			COALESCE(json_extract(CASE WHEN json_valid(v.thumbnails) THEN v.thumbnails ELSE '[]' END, '$[0]'), '') AS thumbnail,
+			COALESCE(v.published, '') AS published
+		FROM series s JOIN json_each(s.videos) member JOIN videos v ON v.id = member.value
+		WHERE s.channel = {:channel}
+		  AND json_array_length(COALESCE(NULLIF(v.owners, ''), '[]')) = 0
+		ORDER BY s.id, CAST(member.key AS INTEGER)`).
+		Bind(dbx.Params{"channel": channel.Id}).All(&members)
+	if err != nil {
+		return nil, loadFailed(err)
+	}
+	bySeries := make(map[string][]member, len(records))
+	for _, m := range members {
+		bySeries[m.Series] = append(bySeries[m.Series], m)
+	}
+	list := make([]Series, 0, len(records))
+	for _, record := range records {
+		entry := Series{Summary: Summary{ID: record.Id, Title: record.GetString("name"), ChannelID: s.nativeChannelID(channel), ChannelRecordID: channel.Id, ChannelName: channel.GetString("name"), Platform: channel.GetString("platform")}, Items: []Item{}}
+		for _, m := range bySeries[record.Id] {
+			video := platform.Video{RecordID: m.ID, ID: m.NativeID, Platform: entry.Platform, Title: m.Title, OriginalTitle: m.Original, OriginalTitleVerified: m.Verified, Thumbnail: m.Thumbnail, Published: platform.PublishedFromStored(platform.ParsePublished(m.Published))}
+			item := Item{Video: video}
+			if !record.GetBool("curated") {
+				title := TitleOf(video)
+				if parsed, ok := s.parser.Parse(title); ok {
+					item.Episode, item.Season = parsed.Episode, parsed.Season
+				} else if label := s.parser.openerLabel(title); label != "" && normalizedName(label) == normalizedName(entry.Title) {
+					first := 1.0
+					item.Episode = &first
+				}
+			}
+			entry.Items = append(entry.Items, item)
+		}
+		if record.GetBool("curated") {
+			entry.Order = OrderCollection
+		} else {
+			order(&entry)
+		}
+		summarize(&entry)
+		list = append(list, entry)
+	}
+	return list, nil
+}
+
 // Get reads one stored series by its record id, with its videos presented and ordered, and the record of
 // its channel. The error is an *apierr.Error: NotFound when no series has the id.
 func (s *Store) Get(seriesRecordID string) (Series, *core.Record, error) {

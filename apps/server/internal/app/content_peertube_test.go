@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -334,8 +335,11 @@ func TestPeerTubeChannelListingLiveAndSubscription(t *testing.T) {
 	if listing.Channel.ID != stored || listing.Channel.Platform != "peertube" || listing.Channel.Name != "Studio" || listing.Channel.SubscriberCount != 40 || listing.Channel.Thumbnail != "http://"+fixture.host+"/avatar-large.png" || len(listing.Videos) != 2 {
 		t.Fatalf("channel: %+v", listing)
 	}
-	if listing.Videos[0].ID != recordIDOf(t, app, "videos", fixture.videoID(contentPeerTubeUUID), "peertube") || listing.Videos[0].ChannelID != stored {
-		t.Fatalf("channel videos: %+v", listing.Videos)
+	for _, nativeID := range []string{contentPeerTubeUUID, contentPeerTubeOther} {
+		id := recordIDOf(t, app, "videos", fixture.videoID(nativeID), "peertube")
+		if !slices.ContainsFunc(listing.Videos, func(video platform.Video) bool { return video.ID == id && video.ChannelID == stored }) {
+			t.Fatalf("missing channel video %s: %+v", id, listing.Videos)
+		}
 	}
 
 	fixture.live.Store(true)

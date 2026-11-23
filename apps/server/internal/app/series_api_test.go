@@ -97,6 +97,14 @@ func TestSeriesEndpointsScopeToOwnedProfileSubscriptionsAndCatalogMembership(t *
 	if _, err := app.FindRecordById("series", firstSeries); err != nil {
 		t.Fatalf("the listed id %q is not a series record: %v", firstSeries, err)
 	}
+	scopedResponse := request(t, handler, "/api/channel/"+firstChannel+"/series", token)
+	acctExpect(t, scopedResponse, http.StatusOK, "")
+	var scoped serAnswer
+	acctDecode(t, scopedResponse, &scoped)
+	global := serList(t, handler, token, first.Id, "")
+	if len(scoped.Series) != 1 || scoped.Series[0] != global.Series[0] || scoped.Sync != global.Sync {
+		t.Fatalf("channel summary differs from public series: scoped=%+v global=%+v", scoped, global)
+	}
 	detail := serGet(t, handler, token, firstSeries, first.Id)
 	members := map[string]bool{}
 	for _, item := range detail.Series.Items {
@@ -124,6 +132,30 @@ func TestSeriesEndpointsScopeToOwnedProfileSubscriptionsAndCatalogMembership(t *
 			t.Fatalf("unsubscribed detail=%+v", detail)
 		}
 	}
+	video, err := app.FindRecordById("videos", firstVideos[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	video.Set("owners", []string{owner.Id})
+	if err := app.Save(video); err != nil {
+		t.Fatal(err)
+	}
+	privateResponse := request(t, handler, "/api/channel/"+firstChannel+"/series", otherToken)
+	acctExpect(t, privateResponse, http.StatusOK, "")
+	var privateSummary serAnswer
+	acctDecode(t, privateResponse, &privateSummary)
+	if len(privateSummary.Series) != 1 || privateSummary.Series[0].VideoCount != 1 {
+		t.Fatalf("private video appeared in public summary: %+v", privateSummary.Series)
+	}
+	channel, err := app.FindRecordById("channels", firstChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel.Set("owners", []string{owner.Id})
+	if err := app.Save(channel); err != nil {
+		t.Fatal(err)
+	}
+	acctExpect(t, request(t, handler, "/api/channel/"+firstChannel+"/series", otherToken), http.StatusNotFound, "NOT_FOUND")
 }
 
 // A platform without catalog synchronization has no series to analyse: subscribing to such a channel must not

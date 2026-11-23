@@ -102,7 +102,7 @@ func TestPublicCatalogIsPersistedInBatchesAndSwapsGenerations(t *testing.T) {
 		t.Fatalf("entries written in %d transactions", len(transactions))
 	}
 	snapshot, err := c.Snapshot(publicKey("chan"), SnapshotOptions{})
-	if err != nil || snapshot.Channel == nil || snapshot.Channel.Name != "Channel chan" || len(snapshot.Videos) != 250 {
+	if err != nil || snapshot.Channel == nil || snapshot.Channel.Name != "Channel chan" || len(snapshot.Videos) != 30 || snapshot.Sync.Loaded != 250 {
 		t.Fatalf("snapshot: %+v %v", snapshot.Sync, err)
 	}
 	for _, v := range snapshot.Videos {
@@ -405,7 +405,7 @@ func connectedVideos(t *testing.T, c *Catalogs, key CatalogKey) Catalog {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return snapshot
+	return snapshot.Catalog
 }
 
 func TestConnectedCatalogsAreIsolatedAndMemoryOnly(t *testing.T) {
@@ -599,5 +599,22 @@ func (w *syncWorld) withoutFirstPage() {
 	w.list.fakePlatform.listing = func(_ context.Context, id string, _ int) (platform.Channel, []platform.Video, error) {
 		canonical := strings.TrimPrefix(id, "@")
 		return platform.Channel{ID: canonical, Platform: alpha, Name: "Channel " + canonical}, nil, nil
+	}
+}
+
+func TestPageVideosOrdersBeforePagingAndSearch(t *testing.T) {
+	videos := make([]platform.Video, 65)
+	for i := range videos {
+		videos[i] = platform.Video{
+			ID:        fmt.Sprintf("video-%02d", i),
+			Title:     "Été",
+			Published: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format(platform.DayLayout),
+		}
+	}
+	first, total := PageVideos(videos, 1, 30, "ete", true)
+	second, _ := PageVideos(videos, 2, 30, "ete", true)
+	newest, _ := PageVideos(videos, 1, 30, "", false)
+	if total != 65 || first[0].ID != "video-00" || second[0].ID != "video-30" || newest[0].ID != "video-64" {
+		t.Fatalf("incorrect ordered pages: first=%s second=%s newest=%s total=%d", first[0].ID, second[0].ID, newest[0].ID, total)
 	}
 }

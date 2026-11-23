@@ -121,7 +121,11 @@ type Catalog struct {
 type SnapshotOptions struct {
 	// Retry starts again a synchronization that failed for good, or a connected one that failed (those are
 	// not retried on their own: a connection is only used while a page asks for it).
-	Retry bool
+	Retry     bool
+	Page      int
+	Limit     int
+	Query     string
+	Ascending bool
 }
 
 // CatalogEvent tells a listener that the catalog of a channel changed: it loaded more, or it finished
@@ -264,30 +268,6 @@ func (c *Catalogs) resolve(key CatalogKey) (CatalogKey, platform.Platform, error
 func (c *Catalogs) canonicalKey(channel *core.Record) (CatalogKey, bool) {
 	key, _, err := c.resolve(CatalogKey{Platform: channel.GetString("platform"), ChannelID: channel.GetString("platform_id")})
 	return key, err == nil
-}
-
-// Snapshot answers the page of a channel: the videos of its catalog loaded so far and where the
-// synchronization stands. It starts the synchronization when the catalog has none that is current: a
-// complete one is current for its lifetime, a failed one is tried again by the queue (opts.Retry only
-// asks for the ones that failed for good again), and a refused one (too many unfinished jobs) answers with
-// an error status. It never waits for the platform.
-func (c *Catalogs) Snapshot(key CatalogKey, opts SnapshotOptions) (Catalog, error) {
-	key, _, err := c.resolve(key)
-	if err != nil {
-		return Catalog{}, err
-	}
-	if key.Connected() {
-		return c.snapshotConnected(key, opts.Retry)
-	}
-	admitted := c.ensurePublic(key, opts.Retry)
-	out, err := c.Stored(key.Platform, key.ChannelID)
-	if err != nil {
-		return Catalog{}, apierr.Internal("Failed to get channel data", err)
-	}
-	if !admitted {
-		out.Sync.Status = Failed
-	}
-	return out, nil
 }
 
 // Ensure makes sure the public catalog of the channel has a synchronization that is current (see
