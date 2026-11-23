@@ -328,6 +328,7 @@ function VideoPlayer({
 
   const {
     qualities,
+    actualQuality,
     audioTracks,
     loading: manifestLoading,
   } = useHlsPlayback({
@@ -639,6 +640,7 @@ function VideoPlayer({
                 onToggleFullscreen={playerFullscreen.toggle}
                 version={streamVersion}
                 quality={displayedQuality}
+                actualQuality={actualQuality}
                 qualities={qualities}
                 onQualityChange={setQualityOverride}
                 audioTracks={audioTracks}
