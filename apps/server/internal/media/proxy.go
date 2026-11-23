@@ -1,11 +1,5 @@
-// Package media is the HLS proxy: it fetches a video's manifest from the platform, serves the playlists with
-// every address rewritten to point back at the server, and fetches the signed resources they name on behalf
-// of the viewer. Private manifests and their signed resources never enter the public database, and the
-// browser never talks to the upstream hosts.
-//
-// The package works on plain net/http. Authorization of a request (account, activation, connection
-// revision) happens in the HTTP layer before it calls in, and reaches the proxy as a Key: resources are
-// addressed per Key, so one account can never reach another's manifest.
+// Package media proxies HLS without exposing upstream URLs.
+// The HTTP layer authorizes requests; Key isolates accounts and connection revisions.
 package media
 
 import (
@@ -19,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,8 +28,7 @@ const (
 	defaultMaxResources = 8192
 	// lookupTimeout bounds the platform lookup of a manifest, which belongs to no single request.
 	lookupTimeout = 90 * time.Second
-	// maxPlaylist bounds a playlist read into memory.
-	maxPlaylist = 8 << 20
+	maxPlaylist   = 8 << 20
 )
 
 var playlistURI = regexp.MustCompile(`URI="([^"]+)"`)
@@ -48,9 +42,7 @@ type CookieProvider interface {
 	CookieFile(userID, platformID string) (path string, cleanup func(), err error)
 }
 
-// Options configures a Proxy.
 type Options struct {
-	// Platforms resolves the platform of a Key (required).
 	Platforms *platform.Registry
 	// DefaultPlatform is the platform id left out of rewritten resource URLs; the registry's default when empty.
 	DefaultPlatform string
@@ -60,11 +52,9 @@ type Options struct {
 	HTTP *http.Client
 	// Spawn owns the detached manifest lookups (required).
 	Spawn cache.Spawner
-	// MaxEntries bounds the manifests kept at once, MaxResources the resource addresses remembered per
-	// manifest (least recently used first out); defaults 128 / 8192.
+	// Defaults: 128 manifests and 8192 resources per manifest.
 	MaxEntries, MaxResources int
-	// Now replaces the clock (tests).
-	Now func() time.Time
+	Now                      func() time.Time
 }
 
 // Proxy serves HLS manifests and their resources. It is safe for concurrent use.
@@ -80,7 +70,6 @@ type Proxy struct {
 	lookups   *cache.Flight[Key, *entry]
 }
 
-// New builds a Proxy.
 func New(opts Options) *Proxy {
 	if opts.Platforms == nil {
 		panic("media: Options.Platforms is required")
@@ -122,46 +111,48 @@ func New(opts Options) *Proxy {
 func (p *Proxy) Remember(key Key, m platform.Manifest) { p.remember(key, m) }
 
 func (p *Proxy) remember(key Key, m platform.Manifest) *entry {
-	if current, ok := p.manifests.Get(key); ok && current.manifest.URL == m.URL {
-		p.manifests.Touch(key, current.lifetime(p.now()))
+	current, ok := p.manifests.Get(key)
+	if ok && current.manifest.URL == m.URL {
+		p.manifests.Touch(key, manifestLife)
 		return current
 	}
 	fresh := newEntry(m, p.maxResources)
-	p.manifests.PutFor(key, fresh, fresh.lifetime(p.now()))
+	if ok {
+		fresh.resources = current.resources
+	}
+	p.manifests.PutFor(key, fresh, manifestLife)
 	return fresh
 }
 
-// Purge drops the manifests that expired; run it periodically to bound the memory of entries nobody asks
-// for any more (lookups already ignore expired ones).
 func (p *Proxy) Purge() { p.manifests.Purge() }
 
-// live returns the manifest in memory and renews its lifetime.
 func (p *Proxy) live(key Key) *entry {
 	current, ok := p.manifests.Get(key)
 	if !ok {
 		return nil
 	}
-	if _, ok := p.manifests.Touch(key, current.lifetime(p.now())); !ok {
+	if _, ok := p.manifests.Touch(key, manifestLife); !ok {
 		return nil
 	}
 	return current
-}
-
-// forget drops the manifest the upstream just refused, unless a newer one replaced it meanwhile.
-func (p *Proxy) forget(key Key, stale *entry) {
-	if current, ok := p.manifests.Get(key); ok && current == stale {
-		p.manifests.Delete(key)
-	}
 }
 
 // manifest answers from the manifests in memory or asks the platform once for all concurrent viewers of
 // the same video. The lookup does not belong to the request that started it: it is bounded by its own
 // deadline and is cancelled only when every waiting request has gone.
 func (p *Proxy) manifest(ctx context.Context, key Key, source string) (*entry, error) {
-	if live := p.live(key); live != nil {
+	live := p.live(key)
+	if live != nil && !live.expired(p.now()) {
 		return live, nil
 	}
+	return p.refresh(ctx, key, source, live)
+}
+
+func (p *Proxy) refresh(ctx context.Context, key Key, source string, stale *entry) (*entry, error) {
 	found, err := p.lookups.Do(ctx, key, func(ctx context.Context) (*entry, error) {
+		if current := p.live(key); current != nil && current != stale {
+			return current, nil
+		}
 		plat, ok := p.platforms.Get(key.Platform)
 		if !ok {
 			return nil, apierr.StreamUnavailable()
@@ -184,7 +175,12 @@ func (p *Proxy) manifest(ctx context.Context, key Key, source string) (*entry, e
 		if err != nil {
 			return nil, err
 		}
-		return p.remember(key, manifest), nil
+		fresh := newEntry(manifest, p.maxResources)
+		if stale != nil {
+			fresh.resources = stale.resources
+		}
+		p.manifests.PutFor(key, fresh, manifestLife)
+		return fresh, nil
 	})
 	if err != nil {
 		return nil, lookupFailure(err, source)
@@ -215,24 +211,36 @@ func (p *Proxy) ServeManifest(w http.ResponseWriter, r *http.Request, key Key, s
 	if err != nil {
 		return err
 	}
-	return p.proxy(w, r, key, found, found.manifest.URL, true, source)
+	return p.proxy(w, r, key, found, found.manifest.URL, "", true, source)
 }
 
-// ServeResource answers a variant playlist, segment or other resource a rewritten playlist pointed at.
 func (p *Proxy) ServeResource(w http.ResponseWriter, r *http.Request, key Key, resourceID, source string) error {
 	harden(w)
-	var remote string
 	found := p.live(key)
+	var item resource
+	var ok bool
 	if found != nil {
-		remote = found.resources.lookup(resourceID)
+		item, ok = found.resource(resourceID)
 	}
-	if remote == "" {
-		return apierr.New(http.StatusNotFound, apierr.CodeResourceExpired, "Media resource expired. Start playback again.")
+	if !ok {
+		return apierr.New(http.StatusNotFound, apierr.CodeResourceExpired, "Media resource expired.")
 	}
-	return p.proxy(w, r, key, found, remote, false, source)
+	remote := item.url
+	if found.expired(p.now()) || (item.generation != nil && item.generation != found.generation) {
+		var err error
+		found, remote, err = p.recoverResource(r.Context(), key, source, found, resourceID, remote)
+		if err != nil {
+			return err
+		}
+	}
+	return p.proxy(w, r, key, found, remote, resourceID, false, source)
 }
 
-func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request, key Key, found *entry, remote string, playlist bool, source string) error {
+func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request, key Key, found *entry, remote, resourceID string, playlist bool, source string) error {
+	return p.proxyAttempt(w, r, key, found, remote, resourceID, playlist, source, true)
+}
+
+func (p *Proxy) proxyAttempt(w http.ResponseWriter, r *http.Request, key Key, found *entry, remote, resourceID string, playlist bool, source string, recover bool) error {
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, remote, nil)
 	if err != nil {
 		return apierr.Internal("Stream failed", err)
@@ -255,10 +263,22 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request, key Key, found *en
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
-		if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusGone {
-			p.forget(key, found)
+		if recover && (response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusGone) {
+			response.Body.Close()
+			var err error
+			if playlist {
+				found, err = p.refresh(r.Context(), key, source, found)
+				if err == nil {
+					remote = found.manifest.URL
+				}
+			} else {
+				found, remote, err = p.recoverResource(r.Context(), key, source, found, resourceID, remote)
+			}
+			if err != nil {
+				return err
+			}
+			return p.proxyAttempt(w, r, key, found, remote, resourceID, playlist, source, false)
 		}
-		// Do not expose signed media URLs or connected-account downloader details.
 		return apierr.New(http.StatusBadGateway, apierr.CodeStreamUpstream, "The upstream media resource is unavailable")
 	}
 	upstreamType := response.Header.Get("Content-Type")
@@ -270,7 +290,7 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request, key Key, found *en
 		if len(data) > maxPlaylist || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("#EXTM3U")) {
 			return apierr.Internal("Stream failed", errors.New("invalid HLS playlist"))
 		}
-		rewritten, err := p.rewrite(key, found, response.Request.URL, data, source)
+		rewritten, err := p.rewriteAt(key, found, response.Request.URL, data, source, resourceID)
 		if err != nil {
 			return apierr.Internal("Stream failed", err)
 		}
@@ -298,18 +318,191 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request, key Key, found *en
 	return nil
 }
 
-// abort ends a response that failed after its status line was sent. There is no error to report any more,
-// and returning normally would let the server finish the body cleanly (a chunked response would look
-// complete), so the player would take a truncated segment for a whole one. net/http treats this panic as
-// "close the connection without logging", which is the one signal the client reliably sees.
+// Abort incomplete responses so the player cannot mistake a truncated segment for a complete one.
 func abort() { panic(http.ErrAbortHandler) }
 
-// rewrite points every address of a playlist at the proxy and remembers what each stands for.
+// resourceIdentity removes only signing fields; all other URL components remain part of the identity.
+// The URL is never synthesized from this identity: it must be found in a fresh upstream playlist.
+func resourceIdentity(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	q := u.Query()
+	parts := strings.Split(u.Path, "/")
+	for i := 0; i+1 < len(parts); i++ {
+		switch parts[i] {
+		case "expire", "signature", "sig", "lsig":
+			parts[i+1] = ""
+			i++
+		}
+	}
+	u.Path = strings.Join(parts, "/")
+	u.RawPath = ""
+	for _, name := range []string{"expire", "expires", "sig", "signature", "lsig", "hdnts", "hdnea", "Policy", "Signature", "Key-Pair-Id"} {
+		q.Del(name)
+	}
+	u.RawQuery = q.Encode()
+	u.Fragment = ""
+	return u.String()
+}
+
+// playlistSemantics supplies an independent identity for opaque signed paths.
+// Variant attributes must match exactly; live segments additionally require a sequence and
+// program date/time, so a changed broadcast or a slid window cannot select a neighbour.
+type playlistSemantics struct {
+	sequence                          int64
+	haveSequence                      bool
+	stream, duration, date, byteRange string
+}
+
+func (s *playlistSemantics) line(line string) string {
+	switch {
+	case strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"):
+		n, err := strconv.ParseInt(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
+		s.sequence, s.haveSequence = n, err == nil && n >= 0
+	case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+		s.stream = line
+	case strings.HasPrefix(line, "#EXTINF:"):
+		s.duration = line
+	case strings.HasPrefix(line, "#EXT-X-PROGRAM-DATE-TIME:"):
+		s.date = line
+	case strings.HasPrefix(line, "#EXT-X-BYTERANGE:"):
+		s.byteRange = line
+	case line != "" && !strings.HasPrefix(line, "#"):
+		semantic := ""
+		if s.stream != "" {
+			semantic = "variant:" + s.stream
+		} else if s.haveSequence && s.date != "" && s.duration != "" {
+			semantic = fmt.Sprintf("segment:%d:%s:%s:%s", s.sequence, s.date, s.duration, s.byteRange)
+		}
+		s.stream, s.date, s.duration, s.byteRange = "", "", "", ""
+		if s.haveSequence {
+			s.sequence++
+		}
+		return semantic
+	}
+	return ""
+}
+
+func upstreamUnavailable() error {
+	return apierr.New(http.StatusBadGateway, apierr.CodeStreamUpstream, "The upstream media resource is unavailable")
+}
+
+// recoverResource walks the remembered playlist ancestry, finding the same resource in freshly fetched
+// playlists. An absent or ambiguous identity is never replaced by a neighbour.
+func (p *Proxy) recoverResource(ctx context.Context, key Key, source string, stale *entry, id, attempted string) (*entry, string, error) {
+	var chain []resource
+	seen := make(map[string]bool)
+	for current := id; current != ""; {
+		if seen[current] || len(chain) >= 16 {
+			return nil, "", upstreamUnavailable()
+		}
+		seen[current] = true
+		item, ok := stale.resource(current)
+		if !ok {
+			return nil, "", upstreamUnavailable()
+		}
+		chain = append(chain, item)
+		current = item.parent
+	}
+	fresh := p.live(key)
+	if fresh == nil {
+		return nil, "", upstreamUnavailable()
+	}
+	if chain[0].url != attempted && chain[0].generation == fresh.generation && !fresh.expired(p.now()) {
+		return fresh, chain[0].url, nil
+	}
+	var err error
+	if fresh == stale && (chain[0].generation == fresh.generation || fresh.expired(p.now())) {
+		fresh, err = p.refresh(ctx, key, source, stale)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	remote := fresh.manifest.URL
+	for i := len(chain) - 1; i >= 0; i-- {
+		remote, err = p.findResource(ctx, key, fresh, remote, chain[i])
+		if err != nil {
+			return nil, "", err
+		}
+		fresh.resources.rememberChild(chain[i].id, remote, chain[i].parent, chain[i].semantic, fresh.generation, chain[i].retained)
+	}
+	return fresh, remote, nil
+}
+
+func (p *Proxy) findResource(ctx context.Context, key Key, found *entry, playlist string, original resource) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, playlist, nil)
+	if err != nil {
+		return "", upstreamUnavailable()
+	}
+	plat, _ := p.platforms.Get(key.Platform)
+	trusted := func(host string) bool { return plat != nil && plat.TrustedMediaHost(host) }
+	for name, value := range requestHeaders(trusted, found.manifest, request.URL) {
+		request.Header.Set(name, value)
+	}
+	request.Header.Set("Accept-Encoding", "identity")
+	response, err := p.client.Do(request)
+	if err != nil {
+		return "", upstreamUnavailable()
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", upstreamUnavailable()
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxPlaylist+1))
+	if err != nil || len(data) > maxPlaylist || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("#EXTM3U")) {
+		return "", upstreamUnavailable()
+	}
+	match := ""
+	ambiguous := false
+	identity := resourceIdentity(original.url)
+	consider := func(raw, semantic string) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return
+		}
+		u = response.Request.URL.ResolveReference(u)
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return
+		}
+		candidate := u.String()
+		sameSemantics := original.semantic != "" && semantic == original.semantic
+		sameURL := identity != "" && resourceIdentity(candidate) == identity
+		if sameSemantics || (sameURL && original.semantic == "") {
+			if match != "" && match != candidate {
+				ambiguous = true
+			}
+			match = candidate
+		}
+	}
+	var semantics playlistSemantics
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		semantic := semantics.line(line)
+		if strings.HasPrefix(line, "#") {
+			for _, attr := range playlistURI.FindAllStringSubmatch(line, -1) {
+				consider(attr[1], "")
+			}
+		} else if line != "" {
+			consider(line, semantic)
+		}
+	}
+	if match == "" || ambiguous {
+		return "", upstreamUnavailable()
+	}
+	return match, nil
+}
+
 func (p *Proxy) rewrite(key Key, found *entry, base *url.URL, data []byte, source string) (string, error) {
+	return p.rewriteAt(key, found, base, data, source, "")
+}
+
+func (p *Proxy) rewriteAt(key Key, found *entry, base *url.URL, data []byte, source, parent string) (string, error) {
 	var result strings.Builder
 	result.Grow(len(data))
 	var resourceErr error
-	address := func(raw string) string {
+	address := func(raw, semantic string, retained bool) string {
 		parsed, err := url.Parse(raw)
 		if err != nil {
 			resourceErr = err
@@ -321,11 +514,20 @@ func (p *Proxy) rewrite(key Key, found *entry, base *url.URL, data []byte, sourc
 			return ""
 		}
 		remote := resolved.String()
-		digest := sha256.Sum256([]byte(remote))
-		id := hex.EncodeToString(digest[:16])
-		found.resources.remember(id, remote)
-		// Resource URLs are client-facing: they address the video by its record id, like every other
-		// API path (Key.VideoID stays native for the platform calls).
+		var id string
+		if retained {
+			digest := sha256.Sum256([]byte(remote))
+			id = hex.EncodeToString(digest[:16])
+			found.resources.rememberChild(id, remote, parent, semantic, found.generation, true)
+		} else {
+			id, err = found.resources.tokens.seal(resourceToken{
+				URL: remote, Parent: parent, Semantic: semantic, Generation: found.generation.id,
+			})
+			if err != nil {
+				resourceErr = err
+				return ""
+			}
+		}
 		path := "/api/stream/" + url.PathEscape(key.RecordID) + "/resource/" + id
 		query := url.Values{}
 		if source != "" {
@@ -339,12 +541,22 @@ func (p *Proxy) rewrite(key Key, found *entry, base *url.URL, data []byte, sourc
 		}
 		return path
 	}
+	var semantics playlistSemantics
 	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSuffix(line, "\r")
+		semantic := semantics.line(strings.TrimSpace(line))
 		if strings.HasPrefix(line, "#") {
-			line = playlistURI.ReplaceAllStringFunc(line, func(attribute string) string { return `URI="` + address(attribute[5:len(attribute)-1]) + `"` })
+			tag, _, _ := strings.Cut(line, ":")
+			retained := false
+			switch tag {
+			case "#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-KEY", "#EXT-X-SESSION-KEY", "#EXT-X-MAP":
+				retained = true
+			}
+			line = playlistURI.ReplaceAllStringFunc(line, func(attribute string) string {
+				return `URI="` + address(attribute[5:len(attribute)-1], "", retained) + `"`
+			})
 		} else if strings.TrimSpace(line) != "" {
-			line = address(strings.TrimSpace(line))
+			line = address(strings.TrimSpace(line), semantic, strings.HasPrefix(semantic, "variant:"))
 		}
 		result.WriteString(line)
 		result.WriteByte('\n')

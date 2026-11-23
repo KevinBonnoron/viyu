@@ -456,7 +456,7 @@ export const en = {
   'sourceFeed.loadMore': 'Load more',
   'player.connectedSession': 'Playing with your connected {name} session.',
   'player.preparing': 'Preparing playback…',
-  'player.streamFailed': 'Playback could not continue. Retry playback to request a fresh stream.',
+  'player.streamFailed': 'Playback could not continue. Please retry playback.',
   'player.retry': 'Retry playback',
   'player.history.waiting':
     'YouTube history: waiting for 30 seconds of actual playback (or the full video if shorter). This marks the whole video watched, not an exact resume position.',

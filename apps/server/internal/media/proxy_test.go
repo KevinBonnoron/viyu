@@ -581,8 +581,8 @@ func TestActivePlaybackCannotExtendSignedManifestBeyondUpstreamExpiry(t *testing
 			t.Fatalf("a manifest valid for 10 more seconds is gone: %s", raw)
 		}
 		clock.advance(11 * time.Second)
-		if proxy.live(key) != nil {
-			t.Fatalf("activity revived an expired signed source: %s", raw)
+		if current := proxy.live(key); current == nil || !current.expired(clock.Now()) {
+			t.Fatalf("expired signature lost its routing state or remained valid: %s", raw)
 		}
 	}
 }
@@ -634,7 +634,7 @@ func TestExplicitPlaybackRetryRefreshesRejectedSignedManifest(t *testing.T) {
 	if retry.Code != http.StatusOK || !strings.Contains(retry.Body.String(), "/api/stream/record1/resource/") {
 		t.Fatalf("retry kept the rejected signed source: %d %s", retry.Code, retry.Body)
 	}
-	if calls := plat.calls.Load(); calls != 2 {
+	if calls := plat.calls.Load(); calls != 3 {
 		t.Fatalf("platform lookups: %d", calls)
 	}
 }
