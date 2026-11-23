@@ -704,3 +704,76 @@ func TestRecommendationsKeepTheTwentyBest(t *testing.T) {
 		t.Fatalf("%d recommendations, want %d", len(got), recommendationLimit)
 	}
 }
+
+func TestRecommendationsExcludeBeforeCandidateLimits(t *testing.T) {
+	for _, scenario := range []struct {
+		name, anchorDate, channel string
+		subscribed, restricted    bool
+	}{
+		{"dated watched anchor channel", "2017-06-01", "anchor-channel", false, false},
+		{"dated watched subscription", "2017-06-01", "followed-channel", true, false},
+		{"dated restricted subscription", "2017-06-01", "followed-channel", true, true},
+		{"undated watched subscription", "", "followed-channel", true, false},
+		{"undated restricted subscription", "", "followed-channel", true, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			owner := f.user("candidate-budget@example.test")
+			profile, sibling := f.profile(owner, "Mine"), f.profile(owner, "Sibling")
+			anchorID := f.put(video{id: "anchor", channel: "anchor-channel", published: scenario.anchorDate})["anchor"]
+			f.save("settings", map[string]any{"user": owner.Id, "hide_subscriber_only": true})
+
+			for _, side := range []string{"before", "after"} {
+				if scenario.anchorDate == "" && side == "before" {
+					continue
+				}
+				published := "2017-05-01"
+				if side == "after" {
+					published = "2017-06-02"
+					if scenario.anchorDate == "" {
+						published = "2017-08-01"
+					}
+				}
+				for index := range candidatesPerQuery {
+					native := fmt.Sprintf("%s-%03d", side, index)
+					id := f.put(video{id: native, channel: scenario.channel, published: published, subscriberOnly: scenario.restricted})[native]
+					if !scenario.restricted {
+						for _, viewer := range []*core.Record{profile, sibling} {
+							f.save("watch_history", map[string]any{"profile": viewer.Id, "video": id, "watched_at": "2026-11-01 00:00:00.000Z"})
+						}
+					}
+				}
+			}
+			// This newest entry stays in the ordinary feed, but not in discovery.
+			feedOnly := f.put(video{id: "feed-only", channel: scenario.channel, published: "2024-01-01", subscriberOnly: true})["feed-only"]
+			f.save("watch_history", map[string]any{"profile": profile.Id, "video": feedOnly, "watched_at": "2026-11-01 00:00:00.000Z"})
+
+			want := make([]string, 0, recommendationLimit)
+			for index := range recommendationLimit {
+				native := fmt.Sprintf("eligible-%02d", index)
+				published := time.Date(2017, time.July, 1+index, 0, 0, 0, 0, time.UTC).Format(platform.DayLayout)
+				id := f.put(video{id: native, channel: scenario.channel, published: published})[native]
+				want = append(want, id)
+			}
+			// Another profile's history must not consume this profile's candidates.
+			f.save("watch_history", map[string]any{"profile": sibling.Id, "video": want[0], "watched_at": "2026-11-01 00:00:00.000Z"})
+			if scenario.subscribed {
+				f.subscribeTo(profile, scenario.channel)
+			}
+			got := f.recommend(owner, profile, anchorID)
+			if scenario.anchorDate == "" {
+				slices.Reverse(want)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("recommendations=%v, want eligible candidates %v", got, want)
+			}
+			if scenario.subscribed {
+				feed := f.feed(owner, profile)
+				if len(feed) == 0 || feed[0] != feedOnly {
+					t.Fatalf("recommendation exclusions changed the ordinary feed: %v", feed)
+				}
+			}
+		})
+	}
+}
