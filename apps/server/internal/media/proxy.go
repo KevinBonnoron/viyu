@@ -329,7 +329,7 @@ func resourceIdentity(raw string) string {
 		return ""
 	}
 	q := u.Query()
-	parts := strings.Split(u.Path, "/")
+	parts := strings.Split(u.EscapedPath(), "/")
 	for i := 0; i+1 < len(parts); i++ {
 		switch parts[i] {
 		case "expire", "signature", "sig", "lsig":
@@ -337,8 +337,12 @@ func resourceIdentity(raw string) string {
 			i++
 		}
 	}
-	u.Path = strings.Join(parts, "/")
-	u.RawPath = ""
+	escaped := strings.Join(parts, "/")
+	u.Path, err = url.PathUnescape(escaped)
+	if err != nil {
+		return ""
+	}
+	u.RawPath = escaped
 	for _, name := range []string{"expire", "expires", "sig", "signature", "lsig", "hdnts", "hdnea", "Policy", "Signature", "Key-Pair-Id"} {
 		q.Del(name)
 	}
@@ -384,6 +388,59 @@ func (s *playlistSemantics) line(line string) string {
 	}
 	return ""
 }
+func normalizedPlaylistLines(data []byte, base *url.URL) []string {
+	lines := strings.Split(string(data), "\n")
+	pending := -1
+	previous := ""
+	var end int64
+	validPrevious := false
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "#EXT-X-BYTERANGE:") {
+			pending = i
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		u, err := url.Parse(line)
+		if err != nil {
+			validPrevious, pending = false, -1
+			continue
+		}
+		current := base.ResolveReference(u).String()
+		if pending < 0 {
+			validPrevious = false
+			continue
+		}
+		value := strings.TrimPrefix(strings.TrimSpace(lines[pending]), "#EXT-X-BYTERANGE:")
+		lengthText, offsetText, explicit := strings.Cut(value, "@")
+		length, err := strconv.ParseInt(lengthText, 10, 64)
+		offset := end
+		if explicit && err == nil {
+			offset, err = strconv.ParseInt(offsetText, 10, 64)
+		} else if !validPrevious || previous != current {
+			err = errors.New("invalid implicit byte range")
+		}
+		if err != nil || length <= 0 || offset < 0 || offset > int64(^uint64(0)>>1)-length {
+			validPrevious, pending = false, -1
+			continue
+		}
+		lines[pending] = fmt.Sprintf("#EXT-X-BYTERANGE:%d@%d", length, offset)
+		previous, end, validPrevious, pending = current, offset+length, true, -1
+	}
+	return lines
+}
+func semanticLine(s *playlistSemantics, line string, base *url.URL) string {
+	byteRange := s.byteRange
+	semantic := s.line(line)
+	if semantic == "" && byteRange != "" && line != "" && !strings.HasPrefix(line, "#") {
+		if u, err := url.Parse(line); err == nil {
+			return "range:" + resourceIdentity(base.ResolveReference(u).String()) + ":" + byteRange
+		}
+	}
+	return semantic
+}
 
 func upstreamUnavailable() error {
 	return apierr.New(http.StatusBadGateway, apierr.CodeStreamUpstream, "The upstream media resource is unavailable")
@@ -414,24 +471,71 @@ func (p *Proxy) recoverResource(ctx context.Context, key Key, source string, sta
 		return fresh, chain[0].url, nil
 	}
 	var err error
+	refreshedRoot := false
 	if fresh == stale && (chain[0].generation == fresh.generation || fresh.expired(p.now())) {
+		refreshedRoot = true
 		fresh, err = p.refresh(ctx, key, source, stale)
 		if err != nil {
 			return nil, "", err
 		}
 	}
-	remote := fresh.manifest.URL
-	for i := len(chain) - 1; i >= 0; i-- {
-		remote, err = p.findResource(ctx, key, fresh, remote, chain[i])
-		if err != nil {
-			return nil, "", err
+	for {
+		remote := fresh.manifest.URL
+		restart := false
+		for i := len(chain) - 1; i >= 0; i-- {
+			remote, err = p.findResource(ctx, key, fresh, remote, chain[i])
+			if err != nil {
+				if i == len(chain)-1 && errors.Is(err, errPlaylistRefused) && !refreshedRoot {
+					refreshedRoot = true
+					fresh, err = p.refresh(ctx, key, source, fresh)
+					if err != nil {
+						return nil, "", err
+					}
+					restart = true
+					break
+				}
+				return nil, "", upstreamUnavailable()
+			}
+			fresh.resources.rememberChild(chain[i].id, remote, chain[i].parent, chain[i].semantic, fresh.generation, chain[i].retained)
+			if current := p.live(key); current != nil && current.generation.id > fresh.generation.id {
+				fresh = current
+				restart = true
+				break
+			}
+			if recorded, ok := fresh.resources.get(chain[i].id); ok && recorded.generation != nil && recorded.generation.id > fresh.generation.id {
+				return nil, "", upstreamUnavailable()
+			}
 		}
-		fresh.resources.rememberChild(chain[i].id, remote, chain[i].parent, chain[i].semantic, fresh.generation, chain[i].retained)
+		if !restart {
+			return fresh, remote, nil
+		}
 	}
-	return fresh, remote, nil
+}
+
+var errPlaylistRefused = errors.New("playlist refused")
+
+type playlistIndex struct {
+	semantic map[string]string
+	identity map[string]string
+}
+
+func addCandidate(index map[string]string, key, candidate string) {
+	if key == "" {
+		return
+	}
+	if previous, ok := index[key]; ok && previous != candidate {
+		index[key] = ""
+	} else if !ok {
+		index[key] = candidate
+	}
 }
 
 func (p *Proxy) findResource(ctx context.Context, key Key, found *entry, playlist string, original resource) (string, error) {
+	found.playlistMu.Lock()
+	defer found.playlistMu.Unlock()
+	if index := found.playlists[playlist]; index != nil {
+		return index.match(original)
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, playlist, nil)
 	if err != nil {
 		return "", upstreamUnavailable()
@@ -448,15 +552,28 @@ func (p *Proxy) findResource(ctx context.Context, key Key, found *entry, playlis
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusGone {
+			return "", errPlaylistRefused
+		}
 		return "", upstreamUnavailable()
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxPlaylist+1))
 	if err != nil || len(data) > maxPlaylist || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("#EXTM3U")) {
 		return "", upstreamUnavailable()
 	}
-	match := ""
+	lines := normalizedPlaylistLines(data, response.Request.URL)
+	var index *playlistIndex
+	if len(found.playlists) < 4 {
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "#EXT-X-ENDLIST" {
+				index = &playlistIndex{semantic: make(map[string]string), identity: make(map[string]string)}
+				break
+			}
+		}
+	}
+	count := 0
+	match, identity := "", resourceIdentity(original.url)
 	ambiguous := false
-	identity := resourceIdentity(original.url)
 	consider := func(raw, semantic string) {
 		u, err := url.Parse(raw)
 		if err != nil {
@@ -467,19 +584,31 @@ func (p *Proxy) findResource(ctx context.Context, key Key, found *entry, playlis
 			return
 		}
 		candidate := u.String()
-		sameSemantics := original.semantic != "" && semantic == original.semantic
-		sameURL := identity != "" && resourceIdentity(candidate) == identity
-		if sameSemantics || (sameURL && original.semantic == "") {
+		candidateIdentity := ""
+		if index != nil || original.semantic == "" {
+			candidateIdentity = resourceIdentity(candidate)
+		}
+		if (original.semantic != "" && semantic == original.semantic) ||
+			(original.semantic == "" && identity != "" && candidateIdentity == identity) {
 			if match != "" && match != candidate {
 				ambiguous = true
 			}
 			match = candidate
 		}
+		if index != nil {
+			count++
+			if count > p.maxResources {
+				index = nil
+			} else {
+				addCandidate(index.semantic, semantic, candidate)
+				addCandidate(index.identity, candidateIdentity, candidate)
+			}
+		}
 	}
 	var semantics playlistSemantics
-	for line := range strings.SplitSeq(string(data), "\n") {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		semantic := semantics.line(line)
+		semantic := semanticLine(&semantics, line, response.Request.URL)
 		if strings.HasPrefix(line, "#") {
 			for _, attr := range playlistURI.FindAllStringSubmatch(line, -1) {
 				consider(attr[1], "")
@@ -488,7 +617,26 @@ func (p *Proxy) findResource(ctx context.Context, key Key, found *entry, playlis
 			consider(line, semantic)
 		}
 	}
+	if index != nil {
+		if found.playlists == nil {
+			found.playlists = make(map[string]*playlistIndex)
+		}
+		found.playlists[playlist] = index
+	}
 	if match == "" || ambiguous {
+		return "", upstreamUnavailable()
+	}
+	return match, nil
+}
+
+func (index *playlistIndex) match(original resource) (string, error) {
+	match := ""
+	if original.semantic != "" {
+		match = index.semantic[original.semantic]
+	} else {
+		match = index.identity[resourceIdentity(original.url)]
+	}
+	if match == "" {
 		return "", upstreamUnavailable()
 	}
 	return match, nil
@@ -516,14 +664,18 @@ func (p *Proxy) rewriteAt(key Key, found *entry, base *url.URL, data []byte, sou
 		remote := resolved.String()
 		var id string
 		if retained {
-			digest := sha256.Sum256([]byte(remote))
+			digest := sha256.Sum256([]byte(parent + "\x00" + remote))
 			id = hex.EncodeToString(digest[:16])
 			found.resources.rememberChild(id, remote, parent, semantic, found.generation, true)
 		} else {
 			id, err = found.resources.tokens.seal(resourceToken{
 				URL: remote, Parent: parent, Semantic: semantic, Generation: found.generation.id,
 			})
-			if err != nil {
+			if errors.Is(err, errResourceTokenTooLarge) {
+				digest := sha256.Sum256([]byte(parent + "\x00" + semantic + "\x00" + remote))
+				id = hex.EncodeToString(digest[:16])
+				found.resources.rememberChild(id, remote, parent, semantic, found.generation, false)
+			} else if err != nil {
 				resourceErr = err
 				return ""
 			}
@@ -542,9 +694,9 @@ func (p *Proxy) rewriteAt(key Key, found *entry, base *url.URL, data []byte, sou
 		return path
 	}
 	var semantics playlistSemantics
-	for line := range strings.SplitSeq(string(data), "\n") {
+	for _, line := range normalizedPlaylistLines(data, base) {
 		line = strings.TrimSuffix(line, "\r")
-		semantic := semantics.line(strings.TrimSpace(line))
+		semantic := semanticLine(&semantics, strings.TrimSpace(line), base)
 		if strings.HasPrefix(line, "#") {
 			tag, _, _ := strings.Cut(line, ":")
 			retained := false

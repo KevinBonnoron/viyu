@@ -53,8 +53,8 @@ func TestRecoveryPreservesRenditionSegmentAndRange(t *testing.T) {
 		t.Fatalf("variant: %d %s", variant.Code, variant.Body)
 	}
 	generation.Store(2)
-	segment := get(t, handler, segments[1], "Range", "bytes=0-3")
-	if segment.Code != http.StatusPartialContent || segment.Body.String() != "high" || segment.Header().Get("Content-Range") != "bytes 0-3/9" {
+	segment := get(t, handler, segments[1], "Range", "bytes=0-5")
+	if segment.Code != http.StatusPartialContent || segment.Body.String() != "high-2" || segment.Header().Get("Content-Range") != "bytes 0-5/9" {
 		t.Fatalf("recovered segment: %d %q %v", segment.Code, segment.Body.String(), segment.Header())
 	}
 	if segment.Header().Get("X-Content-Type-Options") != "nosniff" {
@@ -199,6 +199,7 @@ func TestRecoveryRefusesUnrelatedOrPermanentlyForbiddenResources(t *testing.T) {
 		t.Run(fmt.Sprint(changed), func(t *testing.T) {
 			var generation atomic.Int32
 			generation.Store(1)
+			var otherRequests atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/master.m3u8" {
 					name := "segment"
@@ -207,6 +208,11 @@ func TestRecoveryRefusesUnrelatedOrPermanentlyForbiddenResources(t *testing.T) {
 					}
 					w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 					fmt.Fprintf(w, "#EXTM3U\n%s.ts?sig=%d\n", name, generation.Load())
+					return
+				}
+				if changed && r.URL.Path == "/other.ts" {
+					otherRequests.Add(1)
+					fmt.Fprint(w, "unrelated content")
 					return
 				}
 				w.WriteHeader(http.StatusForbidden)
@@ -224,6 +230,9 @@ func TestRecoveryRefusesUnrelatedOrPermanentlyForbiddenResources(t *testing.T) {
 			r := get(t, handler, paths[0])
 			if r.Code != http.StatusBadGateway || errorCode(t, r) != apierr.CodeStreamUpstream || plat.calls.Load() != 2 {
 				t.Fatalf("failure: %d %s (%d lookups)", r.Code, r.Body, plat.calls.Load())
+			}
+			if otherRequests.Load() != 0 {
+				t.Fatalf("requested unrelated replacement %d times", otherRequests.Load())
 			}
 		})
 	}
