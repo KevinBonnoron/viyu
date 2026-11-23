@@ -73,7 +73,7 @@ func (s *Service) Feed(ctx context.Context, userID, profileID string) ([]platfor
 	if err != nil {
 		return nil, failed(message, err)
 	}
-	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, time.Time{})
+	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, time.Time{}, nil)
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
@@ -101,16 +101,21 @@ func (s *Service) Recommendations(ctx context.Context, userID, profileID, anchor
 	if err != nil {
 		return nil, failed(message, err)
 	}
+	hideSubscriberOnly, err := s.hidesSubscriberOnly(userID)
+	if err != nil {
+		return nil, failed(message, err)
+	}
+	exclusions := &recommendationExclusions{profileID: profileID, anchorID: anchorVideoRecordID, hideSubscriberOnly: hideSubscriberOnly}
 	var published time.Time
 	if anchor != nil {
 		published = anchor.published
 	}
-	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, published)
+	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, published, exclusions)
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
 	if anchor != nil {
-		more, err := s.anchorChannelCandidates(userID, anchor.channelRecordID, published)
+		more, err := s.anchorChannelCandidates(userID, anchor.channelRecordID, published, exclusions)
 		if err != nil {
 			return nil, failed(message, err)
 		}
@@ -125,10 +130,6 @@ func (s *Service) Recommendations(ctx context.Context, userID, profileID, anchor
 		if continuation != nil {
 			candidates = append(candidates, *continuation)
 		}
-	}
-	hideSubscriberOnly, err := s.hidesSubscriberOnly(userID)
-	if err != nil {
-		return nil, failed(message, err)
 	}
 	// Recommendations are discovery: what the profile already watched is not suggested again.
 	watched, err := s.watched(profileID, candidates)
@@ -225,10 +226,16 @@ func (s *Service) likedTagFrequency(profileID string) (map[string]int, error) {
 	return frequency, nil
 }
 
+// A nil exclusion policy keeps the ordinary feed independent of discovery preferences.
+type recommendationExclusions struct {
+	profileID, anchorID string
+	hideSubscriberOnly  bool
+}
+
 // subscriptionCandidates lists the cached videos of the profile's subscribed channels that the account may
 // see, from the platforms it uses. The channels whose listing is stale are scheduled for a refresh, in one
 // call; nothing else leaves the database.
-func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID string, published time.Time) ([]platform.Video, error) {
+func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID string, published time.Time, exclusions *recommendationExclusions) ([]platform.Video, error) {
 	active, err := s.accounts.Activations(userID)
 	if err != nil {
 		return nil, err
@@ -245,11 +252,11 @@ func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID 
 	for i, channel := range channels {
 		ids[i] = channel.Id
 	}
-	return s.cachedVideos(userID, ids, published)
+	return s.cachedVideos(userID, ids, published, exclusions)
 }
 
 // anchorChannelCandidates lists the cached videos of the anchor's channel when its platform is on.
-func (s *Service) anchorChannelCandidates(userID, channelRecordID string, published time.Time) ([]platform.Video, error) {
+func (s *Service) anchorChannelCandidates(userID, channelRecordID string, published time.Time, exclusions *recommendationExclusions) ([]platform.Video, error) {
 	if channelRecordID == "" {
 		return nil, nil
 	}
@@ -267,7 +274,7 @@ func (s *Service) anchorChannelCandidates(userID, channelRecordID string, publis
 	if !active[channel.GetString("platform")] {
 		return nil, nil
 	}
-	return s.cachedVideos(userID, []string{channel.Id}, published)
+	return s.cachedVideos(userID, []string{channel.Id}, published, exclusions)
 }
 
 // subscribedChannels loads the channels the profile subscribes to, with IN queries, keeping those of the
@@ -320,7 +327,7 @@ func (s *Service) scheduleStale(channels []*core.Record) {
 // cachedVideos reads the stored videos of the channels (by record id) that the account may see: the public
 // ones and those it owns. Each batch reads the newest videos, or for dated anchors bounded sets on each
 // side of the anchor date. All records are presented with one batch (see catalog.Store.VideosOf).
-func (s *Service) cachedVideos(userID string, channelIDs []string, published time.Time) ([]platform.Video, error) {
+func (s *Service) cachedVideos(userID string, channelIDs []string, published time.Time, exclusions *recommendationExclusions) ([]platform.Video, error) {
 	var records []*core.Record
 	for chunk := range slices.Chunk(channelIDs, queryBatch) {
 		params := dbx.Params{"user": userID}
@@ -335,6 +342,16 @@ func (s *Service) cachedVideos(userID string, channelIDs []string, published tim
 		}
 		// The visibility clause is catalog.VisibleTo, in SQL, so the limit counts visible rows only.
 		filter += ") && (owners:length = 0 || owners.id ?= {:user})"
+		if exclusions != nil {
+			// Plain != requires every related profile to differ; ?!= could match another
+			// profile's history and let an already-watched video consume the limit.
+			filter += " && id != {:anchor} && watch_history_via_video.profile != {:profile}"
+			params["anchor"] = exclusions.anchorID
+			params["profile"] = exclusions.profileID
+			if exclusions.hideSubscriberOnly {
+				filter += " && subscriber_only = false"
+			}
+		}
 		if published.IsZero() {
 			found, err := s.app.FindRecordsByFilter("videos", filter, "-published", candidatesPerQuery, 0, params)
 			if err != nil {
