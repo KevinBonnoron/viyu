@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
@@ -14,32 +15,42 @@ import (
 // manifestLife is how long a manifest nobody asks for stays in memory; every request renews it.
 const manifestLife = 30 * time.Minute
 
-// entry is one authorized manifest and the signed resources its playlists pointed at.
+var nextGeneration atomic.Uint64
+var staleGeneration generation
+
 type entry struct {
 	manifest platform.Manifest
 	// validUntil is when the upstream stops honouring the signed manifest (zero: no signature found).
-	// Activity never keeps an entry alive past it.
 	validUntil time.Time
 	resources  *resourceSet
+	generation *generation
 }
 
 func newEntry(manifest platform.Manifest, maxResources int) *entry {
-	return &entry{manifest: manifest, validUntil: manifestExpiry(manifest.URL), resources: newResourceSet(maxResources)}
+	return &entry{manifest: manifest, validUntil: manifestExpiry(manifest.URL), resources: newResourceSet(maxResources), generation: &generation{id: nextGeneration.Add(1)}}
 }
 
-// lifetime is how long the entry lives from now: the standard keep-alive, cut short by the signature.
-func (e *entry) lifetime(now time.Time) time.Duration {
-	life := manifestLife
-	if !e.validUntil.IsZero() {
-		if left := e.validUntil.Sub(now); left < life {
-			life = left
-		}
+func (e *entry) expired(now time.Time) bool {
+	return !e.validUntil.IsZero() && !now.Before(e.validUntil)
+}
+
+func (e *entry) resource(id string) (resource, bool) {
+	if item, ok := e.resources.get(id); ok {
+		return item, true
 	}
-	return life
+	token, ok := e.resources.tokens.open(id)
+	if !ok {
+		return resource{}, false
+	}
+	issued := &staleGeneration
+	if token.Generation == e.generation.id {
+		issued = e.generation
+	}
+	item := resource{id: id, url: token.URL, parent: token.Parent, semantic: token.Semantic, generation: issued}
+	e.resources.rememberChild(id, item.url, item.parent, item.semantic, issued, false)
+	return item, true
 }
 
-// manifestExpiry reads the signature deadline of a manifest address (`expire` query parameter or path
-// segment) and takes a safety margin off it.
 func manifestExpiry(raw string) time.Time {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -61,42 +72,80 @@ func manifestExpiry(raw string) time.Time {
 	return time.Unix(seconds, 0).Add(-30 * time.Second)
 }
 
-// resourceSet remembers the segment/variant addresses of one manifest, least recently used first out: a
-// hostile or enormous playlist cannot grow memory. It maps a resource id to its element in order, which
-// holds the most recently used address first.
+// Protected routes precede boundary; segments follow it and are evicted first.
 type resourceSet struct {
 	max int
 
-	mu    sync.Mutex
-	items map[string]*list.Element
-	order *list.List
+	mu       sync.Mutex
+	items    map[string]*list.Element
+	order    *list.List
+	boundary *list.Element
+	tokens   resourceTokens
 }
 
-type resource struct{ id, url string }
+type generation struct{ id uint64 }
+
+type resource struct {
+	id, url, parent, semantic string
+	generation                *generation
+	retained                  bool
+	// A shared URL can represent several byte ranges or renditions; it has no unique semantic identity.
+	ambiguousSemantics bool
+}
 
 func newResourceSet(max int) *resourceSet {
-	return &resourceSet{max: max, items: make(map[string]*list.Element), order: list.New()}
+	order := list.New()
+	return &resourceSet{max: max, items: make(map[string]*list.Element), order: order, boundary: order.PushBack(nil)}
 }
 
-// remember records an address, evicting the least recently used one when the set is full.
-func (s *resourceSet) remember(id, remote string) {
+func (s *resourceSet) remember(id, remote string) { s.rememberChild(id, remote, "", "", nil, false) }
+
+func (s *resourceSet) rememberChild(id, remote, parent, semantic string, generation *generation, retained bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if element := s.items[id]; element != nil {
-		element.Value.(*resource).url = remote
-		s.order.MoveToFront(element)
+		item := element.Value.(*resource)
+		item.url = remote
+		item.parent = parent
+		if item.semantic != semantic {
+			item.ambiguousSemantics = true
+		}
+		if item.ambiguousSemantics {
+			item.semantic = ""
+		} else {
+			item.semantic = semantic
+		}
+		item.generation = generation
+		item.retained = item.retained || retained
+		s.touch(element)
 		return
 	}
-	if s.order.Len() >= s.max {
-		if oldest := s.order.Back(); oldest != nil {
+	if len(s.items) >= s.max {
+		oldest := s.order.Back()
+		if oldest == s.boundary {
+			oldest = s.boundary.Prev()
+		}
+		if oldest != nil {
 			delete(s.items, oldest.Value.(*resource).id)
 			s.order.Remove(oldest)
 		}
 	}
-	s.items[id] = s.order.PushFront(&resource{id: id, url: remote})
+	item := &resource{id: id, url: remote, parent: parent, semantic: semantic, generation: generation, retained: retained}
+	if retained {
+		s.items[id] = s.order.PushFront(item)
+	} else {
+		s.items[id] = s.order.InsertAfter(item, s.boundary)
+	}
 }
 
-// lookup returns a remembered address ("" when unknown) and marks it recently used.
+func (s *resourceSet) touch(element *list.Element) {
+	if element.Value.(*resource).retained {
+		s.order.MoveToFront(element)
+	} else {
+		s.order.MoveAfter(element, s.boundary)
+	}
+}
+
 func (s *resourceSet) lookup(id string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,12 +153,23 @@ func (s *resourceSet) lookup(id string) string {
 	if element == nil {
 		return ""
 	}
-	s.order.MoveToFront(element)
+	s.touch(element)
 	return element.Value.(*resource).url
+}
+
+func (s *resourceSet) get(id string) (resource, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	element := s.items[id]
+	if element == nil {
+		return resource{}, false
+	}
+	s.touch(element)
+	return *element.Value.(*resource), true
 }
 
 func (s *resourceSet) len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.order.Len()
+	return len(s.items)
 }

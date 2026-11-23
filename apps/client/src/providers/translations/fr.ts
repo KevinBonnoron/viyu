@@ -467,7 +467,7 @@ export const fr = {
   'sourceFeed.loadMore': 'Charger la suite',
   'player.connectedSession': 'Lecture avec votre session {name} connectée.',
   'player.preparing': 'Préparation de la lecture…',
-  'player.streamFailed': 'La lecture a été interrompue. Réessayez pour demander un nouveau flux.',
+  'player.streamFailed': 'La lecture a été interrompue. Veuillez relancer la lecture.',
   'player.retry': 'Relancer la lecture',
   'player.history.waiting':
     'Historique YouTube : en attente de 30 secondes de lecture effective (ou de la vidéo entière si elle est plus courte). Cela marque toute la vidéo comme vue, sans enregistrer une position de reprise précise.',
