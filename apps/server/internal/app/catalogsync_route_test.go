@@ -16,6 +16,8 @@ import (
 	"ganigeorgiev.com/pocketbase/pocketbase/core"
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/jobs"
+	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
+	"github.com/KevinBonnoron/viyu/apps/server/internal/series"
 )
 
 // csyncScript is a yt-dlp stand-in that lists the whole catalog of a channel the way a lazy extraction does.
@@ -111,8 +113,7 @@ func csyncStarts(t *testing.T, state string) int {
 	return len(strings.Fields(string(data)))
 }
 
-// csyncGet reads the answer of a catalog synchronization route and checks what every answer of it must be: not
-// cacheable, free of the downloader's diagnostics, and counting exactly the videos it lists.
+// csyncGet collects bounded pages of a catalog synchronization response.
 func csyncGet(t *testing.T, handler http.Handler, path, token string) jobs.Catalog {
 	t.Helper()
 	res := request(t, handler, path, token)
@@ -123,10 +124,16 @@ func csyncGet(t *testing.T, handler http.Handler, path, token string) jobs.Catal
 	if strings.Contains(res.Body.String(), "fixture downloader detail") {
 		t.Fatal("the catalog exposed the downloader's stderr")
 	}
-	var answer jobs.Catalog
-	acctDecode(t, res, &answer)
-	if answer.Sync.Loaded != len(answer.Videos) {
-		t.Fatalf("loaded is not the number of videos available: %+v", answer.Sync)
+	var result jobs.CatalogPage
+	acctDecode(t, res, &result)
+	answer := result.Catalog
+	for page := 2; result.HasMore; page++ {
+		res = request(t, handler, fmt.Sprintf("%s&page=%d", path, page), token)
+		acctExpect(t, res, http.StatusOK, "")
+		var next jobs.CatalogPage
+		acctDecode(t, res, &next)
+		answer.Videos = append(answer.Videos, next.Videos...)
+		result = next
 	}
 	return answer
 }
@@ -306,4 +313,116 @@ func TestChannelCatalogRouteRefusals(t *testing.T) {
 	if starts := csyncStarts(t, state); starts != 0 {
 		t.Fatalf("a refused request started %d extractions", starts)
 	}
+}
+
+func TestChannelCatalogPagesSearchAndSeriesScope(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	csyncMarker(t, state, "release")
+	options := append(csyncOptions(t, state), func(o *Options) { o.Jobs.Analysis.Debounce = time.Hour })
+	app, handler := newApp(t, options...)
+	channelID := storedChannel(t, app, testPlatforms().Default().ID(), serChannel("catalog"), "Catalog channel")
+	path := "/api/channel/" + channelID
+	complete := csyncWait(t, handler, path+"?sync=1", "", func(a jobs.Catalog) bool { return a.Sync.Status == jobs.Complete })
+	if complete.Sync.Loaded != 65 {
+		t.Fatalf("catalog: %+v", complete.Sync)
+	}
+	getPage := func(query string) jobs.CatalogPage {
+		t.Helper()
+		res := request(t, handler, path+"?sync=1"+query, "")
+		acctExpect(t, res, http.StatusOK, "")
+		var page jobs.CatalogPage
+		acctDecode(t, res, &page)
+		return page
+	}
+	first, second, last := getPage(""), getPage("&page=2"), getPage("&page=3")
+	if len(first.Videos) != 30 || len(second.Videos) != 30 || len(last.Videos) != 5 || !first.HasMore || !second.HasMore || last.HasMore || first.Total != 65 || first.Sync.Loaded != 65 {
+		t.Fatalf("pages: %+v %+v %+v", first, second, last)
+	}
+	seen := map[string]bool{}
+	for _, page := range []jobs.CatalogPage{first, second, last} {
+		for _, video := range page.Videos {
+			if seen[video.ID] {
+				t.Fatalf("duplicate video %s", video.ID)
+			}
+			seen[video.ID] = true
+		}
+	}
+	for i, video := range complete.Videos {
+		record, err := app.FindRecordById("videos", video.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record.Set("published", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i))
+		if err := app.Save(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asc, asc2 := getPage("&order=asc"), getPage("&order=asc&page=2")
+	desc, desc2 := getPage("&order=desc"), getPage("&order=desc&page=2")
+	if asc.Videos[0].ID != complete.Videos[0].ID || asc2.Videos[0].ID != complete.Videos[30].ID ||
+		desc.Videos[0].ID != complete.Videos[64].ID || desc2.Videos[0].ID != complete.Videos[34].ID ||
+		asc.Total != 65 || asc.Sync.Loaded != 65 {
+		t.Fatalf("chronological paging: asc=%+v asc2=%+v desc=%+v desc2=%+v", asc, asc2, desc, desc2)
+	}
+	searchedAsc := getPage("&order=asc&q=listing")
+	if len(searchedAsc.Videos) != 30 || searchedAsc.Videos[0].ID != complete.Videos[0].ID {
+		t.Fatalf("chronological search: %+v", searchedAsc)
+	}
+	acctExpect(t, request(t, handler, path+"?sync=1&order=sideways", ""), http.StatusBadRequest, "INVALID_SOURCE_INPUT")
+	target := last.Videos[0]
+	record, err := app.FindRecordById("videos", target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Set("titles", map[string]string{"original": "Été spécial", "en": "Translated title"})
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	search := getPage("&q=ete%20special")
+	if search.Total != 1 || search.Sync.Loaded != 65 || len(search.Videos) != 1 || search.Videos[0].ID != target.ID {
+		t.Fatalf("folded search: %+v", search)
+	}
+	owner := testUser(t, app, "paging-private@example.test")
+	record.Set("owners", []string{owner.Id})
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	hidden := getPage("&q=ete%20special")
+	if hidden.Total != 0 || hidden.Sync.Loaded != 64 || len(hidden.Videos) != 0 {
+		t.Fatalf("private catalog member leaked: %+v", hidden)
+	}
+	acctExpect(t, request(t, handler, path+"?sync=1&limit=51", ""), http.StatusBadRequest, "INVALID_SOURCE_INPUT")
+	acctExpect(t, request(t, handler, path+"?sync=1&page=0", ""), http.StatusBadRequest, "INVALID_SOURCE_INPUT")
+	collection, err := app.FindCollectionByNameOrId("series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveSeries := func(channelID, name string, videos ...string) *core.Record {
+		t.Helper()
+		record := core.NewRecord(collection)
+		record.Set("channel", channelID)
+		record.Set("name", name)
+		record.Set("videos", videos)
+		record.Set("curated", true)
+		if err := app.Save(record); err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	mine := saveSeries(channelID, "Visible series", first.Videos[0].ID, target.ID)
+	otherNative := serChannel("other")
+	otherChannel := storedChannel(t, app, testPlatforms().Default().ID(), otherNative, "Other channel")
+	otherVideo := storedVideo(t, app, platform.Video{ID: "other-video", Platform: testPlatforms().Default().ID(), ChannelID: otherNative, Title: "Other video"})
+	saveSeries(otherChannel, "Unrelated series", otherVideo)
+	seriesResponse := request(t, handler, path+"/series", "")
+	acctExpect(t, seriesResponse, http.StatusOK, "")
+	var summaries struct {
+		Series []series.Summary `json:"series"`
+	}
+	acctDecode(t, seriesResponse, &summaries)
+	if len(summaries.Series) != 1 || summaries.Series[0].ID != mine.Id || summaries.Series[0].ChannelID != channelID || summaries.Series[0].VideoCount != 1 {
+		t.Fatalf("channel series scope or private member filtering failed: %+v", summaries.Series)
+	}
+	acctExpect(t, request(t, handler, "/api/channel/doesnotexist123/series", ""), http.StatusNotFound, "NOT_FOUND")
 }

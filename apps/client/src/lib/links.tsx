@@ -19,10 +19,22 @@ export function VideoLink({ video, series, source, ...anchor }: AnchorProps & { 
 }
 
 /** A link to a channel page, optionally on its series tab. */
-export function ChannelLink({ channel, tab, ...anchor }: AnchorProps & { channel: ChannelTargetInput; tab?: 'videos' | 'series' }) {
+export function ChannelLink({
+  channel,
+  tab,
+  resetScroll,
+  ...anchor
+}: AnchorProps & { channel: ChannelTargetInput; tab?: 'videos' | 'series'; resetScroll?: boolean }) {
   const target = channelTarget(channel, tab);
   return (
-    <Link to="/channel/$channelId" params={{ channelId: target.channelId }} search={{ tab: target.tab }} state={{ viyuSource: target.source }} {...anchor} />
+    <Link
+      to="/channel/$channelId"
+      params={{ channelId: target.channelId }}
+      search={{ tab: target.tab }}
+      state={{ viyuSource: target.source }}
+      resetScroll={resetScroll}
+      {...anchor}
+    />
   );
 }
 

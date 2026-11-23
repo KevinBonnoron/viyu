@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { ListVideo, UserCheck, UserPlus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ChannelAvatar } from '@/components/channel-avatar';
 import { PageTitle } from '@/components/page-title';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { VideoGrid } from '@/features/video';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
 import { useChannelLive } from '@/hooks/useChannelLive';
 import { useChannelSeries } from '@/hooks/useChannelSeries';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useChannelSubscription } from '@/hooks/useSubscriptions';
 import { api } from '@/lib/api';
 import { requestError } from '@/lib/api-error';
@@ -22,9 +23,9 @@ import { isSourceActive } from '@/lib/source-activation';
 import { foldSearch } from '@/lib/text';
 import { formatCompactNumber } from '@/lib/utils';
 import { type TranslationKey, useI18n } from '@/providers/i18n-provider';
-import { useProfiles } from '@/providers/profiles-provider';
 import { useSources } from '@/providers/sources-provider';
 import type { ChannelInfo, ChannelSync, VideoResult } from '@/types';
+import type { SeriesSummary, SeriesSync } from '@/types/series.type';
 
 /** A channel page for the channel of a `channels` record. `nativeId` is the platform's own id of the channel, only used to tell whether the channel has been resolved yet. */
 export function ChannelScreen({
@@ -75,31 +76,66 @@ function Channel({
   const [error, setError] = useState<TranslationKey | null>(null);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
+  const [seriesSearch, setSeriesSearch] = useState('');
+  const query = useDebouncedValue(search.trim(), 300);
+  const [requested, setRequested] = useState<{ query: string; page: number }>({ query: '', page: 1 });
+  const [resultKey, setResultKey] = useState<{ query: string } | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const loaded = useRef<{ query: string; page: number; videos: VideoResult[] } | null>(null);
+  const lastRetry = useRef(0);
+  const page = requested.query === query ? requested.page : 1;
+  const syncing = sync?.status === 'pending' || sync?.status === 'running';
+  const channelSeries = useChannelSeries(channelId, platform === 'youtube', syncing);
   const subscription = useChannelSubscription(channel ? { id: channelId, platform: channel.platform, name: channel.name, thumbnail: channel.thumbnail } : null);
   const live = useChannelLive(channelId);
   const target = { id: channelId, platform, source };
 
-  // The channel is read again every couple of seconds while the server is still crawling it.
+  const videoResultReady = resultKey?.query === query;
   useAbortableEffect(
     async (signal) => {
+      if (requested.query !== query) {
+        setRequested({ query, page: 1 });
+      }
       setLoading(true);
       setError(null);
-      let retrySync = retry > 0;
+      let retrySync = retry !== lastRetry.current;
+      let firstPass = true;
       let crawling = true;
       while (crawling && !signal.aborted) {
         try {
-          const data = await api.channels.get(channelId, { source, signal, sync: platform === 'youtube', retry: retrySync });
+          const previous = loaded.current;
+          const append = firstPass && previous?.query === query && previous.page < page;
+          const catalog = new Map<string, VideoResult>(append ? previous.videos.map((video) => [`${video.platform}:${video.id}`, video]) : []);
+          const pages = [];
+          for (let current = append ? previous.page + 1 : 1; current <= page; current++) {
+            const result = await api.channels.get(channelId, {
+              source,
+              signal,
+              sync: platform === 'youtube',
+              retry: retrySync && current === (append ? previous.page + 1 : 1),
+              page: current,
+              limit: 30,
+              q: query,
+            });
+            for (const video of result.videos) {
+              catalog.set(`${video.platform}:${video.id}`, video);
+            }
+            pages.push(result);
+            if (!result.hasMore) {
+              break;
+            }
+          }
+          const data = pages[pages.length - 1];
           if (signal.aborted) {
             return;
           }
+          lastRetry.current = retry;
           setChannel((current) => data.channel ?? current);
-          setVideos((current) => {
-            const catalog = new Map(current.map((video) => [`${video.platform}:${video.id}`, video]));
-            for (const video of data.videos) {
-              catalog.set(`${video.platform}:${video.id}`, video);
-            }
-            return Array.from(catalog.values());
-          });
+          const nextVideos = Array.from(catalog.values());
+          loaded.current = { query, page: data.page, videos: nextVideos };
+          setVideos(nextVideos);
+          setResultKey({ query });
+          setHasMore(data.hasMore);
           setHasResult(true);
           setSync(data.sync ?? null);
           crawling = data.sync?.status === 'pending' || data.sync?.status === 'running';
@@ -114,15 +150,15 @@ function Channel({
         }
         setLoading(false);
         retrySync = false;
+        firstPass = false;
         if (crawling) {
           await sleep(2000, signal);
         }
       }
     },
-    [channelId, source, platform, retry],
+    [channelId, source, platform, retry, query, page],
   );
 
-  const syncing = sync?.status === 'pending' || sync?.status === 'running';
   // A video flagged live is only that while the live lookup says so: a stream that ended keeps its flag until the server notices.
   const channelVideos = useMemo(
     () =>
@@ -135,11 +171,6 @@ function Channel({
         ),
     [videos, sources, live?.recordId],
   );
-  // The whole catalog is already loaded (and keeps growing while it syncs), so searching it needs no request.
-  const visibleVideos = useMemo(() => {
-    const needle = foldSearch(search.trim());
-    return needle ? channelVideos.filter((video) => foldSearch(`${video.title} ${video.originalTitle}`).includes(needle)) : channelVideos;
-  }, [channelVideos, search]);
   // An unresolved YouTube channel is named after its own ID. A Twitch channel's name is routinely its login, so equality says nothing there.
   const named = !!channel?.name && !(channel.platform === 'youtube' && channel.name === nativeId);
   const waitingForChannel = !error && (loading || syncing) && !named;
@@ -237,6 +268,7 @@ function Channel({
               <nav aria-label={t('channel.tabs')} className="flex gap-2">
                 <ChannelLink
                   channel={target}
+                  resetScroll={false}
                   tab="videos"
                   aria-current={!series ? 'page' : undefined}
                   className={`flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium ${!series ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -255,39 +287,56 @@ function Channel({
                 {platform === 'youtube' && (
                   <ChannelLink
                     channel={target}
+                    resetScroll={false}
                     tab="series"
                     aria-current={series ? 'page' : undefined}
                     className={`flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium ${series ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                   >
                     {t('nav.series')}
-                    <SeriesCount channelId={channelId} videos={videos} />
+                    <SeriesCount count={channelSeries.series.length} />
                   </ChannelLink>
                 )}
               </nav>
-              {(series || videos.length > 0) && (
+              <div className="mb-1 flex w-full flex-wrap items-center gap-2 sm:w-auto">
                 <Input
                   type="search"
                   aria-label={t('channel.search')}
                   placeholder={t('channel.search')}
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  className="mb-1 w-full sm:w-72"
+                  value={series ? seriesSearch : search}
+                  onChange={(event) => (series ? setSeriesSearch(event.target.value) : setSearch(event.target.value))}
+                  className="min-w-0 flex-1 sm:w-72 sm:flex-none"
                 />
-              )}
+              </div>
             </div>
-            {series ? (
-              <ChannelSeries channelId={channelId} videos={videos} sync={sync} query={search} active />
-            ) : videos.length > 0 ? (
-              visibleVideos.length > 0 ? (
-                <VideoGrid videos={visibleVideos} historyActions />
-              ) : (
+            <div hidden={series}>
+              {videoResultReady && channelVideos.length > 0 ? (
+                <VideoGrid
+                  videos={channelVideos}
+                  sortByPublication={false}
+                  historyActions
+                  onEndReached={!series && hasMore && !loading && !error ? () => setRequested({ query, page: page + 1 }) : undefined}
+                />
+              ) : (!videoResultReady || syncing || loading) && !error ? (
+                <VideoGridSkeleton />
+              ) : !error && query ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">{t('subscriptions.noSearchResults')}</p>
-              )
-            ) : (syncing || loading) && !error ? (
-              <VideoGridSkeleton />
-            ) : !error && sync?.status !== 'error' ? (
-              <p className="text-muted-foreground">{t('channel.empty')}</p>
-            ) : null}
+              ) : !error && sync?.status !== 'error' ? (
+                <p className="text-muted-foreground">{t('channel.empty')}</p>
+              ) : null}
+              {loading && videoResultReady && channelVideos.length > 0 && <VideoGridSkeleton fillViewport={false} />}
+            </div>
+            {platform === 'youtube' && (
+              <div hidden={!series}>
+                <ChannelSeries
+                  series={channelSeries.series}
+                  seriesSync={channelSeries.sync}
+                  error={channelSeries.error}
+                  retry={channelSeries.retry}
+                  sync={sync}
+                  query={seriesSearch}
+                />
+              </div>
+            )}
           </div>
         </>
       )}
@@ -376,58 +425,46 @@ export function ChannelLoading() {
     </section>
   );
 }
-function SeriesCount({ channelId, videos }: { channelId: string; videos: VideoResult[] }) {
+function SeriesCount({ count }: { count: number }) {
   const { t, language } = useI18n();
-  const { isError } = useProfiles();
-  const series = useChannelSeries(channelId, videos);
-  if (isError || series.length === 0) {
+  if (count === 0) {
     return null;
   }
   return (
     <span
-      title={t('series.count', { count: series.length.toLocaleString(language) })}
+      title={t('series.count', { count: count.toLocaleString(language) })}
       className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground"
     >
-      <span aria-hidden="true">{series.length.toLocaleString(language)}</span>
-      <span className="sr-only">{t('series.count', { count: series.length.toLocaleString(language) })}</span>
+      <span aria-hidden="true">{count.toLocaleString(language)}</span>
+      <span className="sr-only">{t('series.count', { count: count.toLocaleString(language) })}</span>
     </span>
   );
 }
 
 function ChannelSeries({
-  channelId,
-  videos,
+  series: channelSeries,
+  seriesSync,
+  error,
+  retry,
   sync,
   query,
-  active,
 }: {
-  channelId: string;
-  videos: VideoResult[];
+  series: SeriesSummary[];
+  seriesSync: SeriesSync | null;
+  error: boolean;
+  retry: () => void;
   sync: ChannelSync | null;
   query: string;
-  active: boolean;
 }) {
-  const { t } = useI18n();
-  const { isError, retry } = useProfiles();
-  if (isError) {
+  const { t, language } = useI18n();
+  if (error) {
     return (
       <Button variant="outline" onClick={retry}>
-        {t('profiles.loadError')} {t('common.retry')}
+        {t('errors.requestFailed')} {t('common.retry')}
       </Button>
     );
   }
-  if (!active) {
-    return null;
-  }
-  return <ChannelSeriesList channelId={channelId} videos={videos} sync={sync} query={query} />;
-}
-
-function ChannelSeriesList({ channelId, videos, sync, query }: { channelId: string; videos: VideoResult[]; sync: ChannelSync | null; query: string }) {
-  const { t, language } = useI18n();
-  // Series arrive live from the collection as the background analysis stores them; the channel's own
-  // crawl status drives the synchronizing and empty states.
-  const channelSeries = useChannelSeries(channelId, videos);
-  const synchronizing = sync?.status === 'pending' || sync?.status === 'running';
+  const synchronizing = sync?.status === 'pending' || sync?.status === 'running' || seriesSync?.status === 'pending' || seriesSync?.status === 'running';
   const needle = foldSearch(query.trim());
   const visibleSeries = needle ? channelSeries.filter((series) => foldSearch(series.title).includes(needle)) : channelSeries;
   return (
@@ -471,7 +508,7 @@ function ChannelSeriesList({ channelId, videos, sync, query }: { channelId: stri
         />
       ) : channelSeries.length > 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{t('series.noSearchResults')}</p>
-      ) : sync?.status === 'complete' ? (
+      ) : !synchronizing && seriesSync?.status === 'complete' ? (
         <p className="text-muted-foreground">{t('series.noChannelSeries')}</p>
       ) : null}
     </div>

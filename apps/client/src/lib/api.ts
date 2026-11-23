@@ -19,6 +19,7 @@ import type {
   VideoCommentsPage,
   VideoResult,
 } from '@/types';
+import type { SeriesSummary, SeriesSync } from '@/types/series.type';
 import { type ApiError, apiErrorFrom } from './api-error';
 import { path, queryString, type RequestOptions, readResponse, requestInit } from './api-request';
 import { apiUrl, pb } from './pocketbase';
@@ -37,6 +38,10 @@ export interface ChannelPage {
   channel: ChannelInfo | null;
   videos: VideoResult[];
   sync?: ChannelSync;
+  page: number;
+  limit: number;
+  hasMore: boolean;
+  total: number;
 }
 
 export interface VideoUrl {
@@ -135,8 +140,26 @@ export const api = {
   },
 
   channels: {
-    get: (channelId: string, { source, sync, retry, signal }: Aborts & { source?: string; sync?: boolean; retry?: boolean } = {}) =>
-      request<ChannelPage>(path`/channel/${channelId}`, { query: { source, sync, retry }, signal, cache: sync ? 'no-store' : undefined }),
+    get: (
+      channelId: string,
+      {
+        source,
+        sync,
+        retry,
+        page,
+        limit,
+        q,
+        order,
+        signal,
+      }: Aborts & { source?: string; sync?: boolean; retry?: boolean; page?: number; limit?: number; q?: string; order?: 'asc' | 'desc' } = {},
+    ) =>
+      request<ChannelPage>(path`/channel/${channelId}`, {
+        query: { source, sync, retry, page, limit, q, order },
+        signal,
+        cache: sync ? 'no-store' : undefined,
+      }),
+    series: (channelId: string, { signal }: Aborts = {}) =>
+      request<{ series: SeriesSummary[]; sync: SeriesSync }>(path`/channel/${channelId}/series`, { signal, cache: 'no-store' }),
     live: (channelId: string, { signal }: Aborts = {}) => request<ChannelLive>(path`/channel/${channelId}/live`, { signal }),
   },
 

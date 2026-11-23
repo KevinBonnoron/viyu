@@ -1,48 +1,43 @@
-import { eq, useLiveQuery } from '@tanstack/react-db';
-import { useMemo } from 'react';
-import { seriesCollection } from '@/collections/series.collection';
-import type { VideoResult } from '@/types';
+import { useState } from 'react';
+import { api } from '@/lib/api';
+import { sleep } from '@/lib/sleep';
+import type { SeriesSummary, SeriesSync } from '@/types/series.type';
+import { useAbortableEffect } from './useAbortableEffect';
 
-/** A channel's series as the tab's cards need it, derived from the record and the catalog videos. */
-export interface ChannelSeriesSummary {
-  id: string;
-  title: string;
-  thumbnail: string;
-  videoCount: number;
-  /** Day of the newest member the catalog knows; empty when no member's publication is known. */
-  latestPublishedAt: string;
-}
+export function useChannelSeries(channelId: string, enabled: boolean, channelSyncing: boolean) {
+  const [series, setSeries] = useState<SeriesSummary[]>([]);
+  const [sync, setSync] = useState<SeriesSync | null>(null);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
-/**
- * The series of one channel, live from the `series` collection. Records hold only the ordered member
- * ids, so the card fields are derived from the channel's catalog videos: the first artwork found and
- * the newest publication day. Sorted like the server used to: newest publication first, then name.
- */
-export function useChannelSeries(channelId: string, videos: VideoResult[]): ChannelSeriesSummary[] {
-  const query = useLiveQuery({
-    query: (q) => (channelId ? q.from({ series: seriesCollection }).where(({ series }) => eq(series.channel, channelId)) : undefined),
-  });
-  return useMemo(() => {
-    const byId = new Map(videos.map((video) => [video.id, video]));
-    const summaries = (query.data ?? []).map((record): ChannelSeriesSummary => {
-      let thumbnail = '';
-      let latestPublishedAt = '';
-      for (const id of record.videos ?? []) {
-        const video = byId.get(id);
-        if (!video) {
-          continue;
-        }
-        if (!thumbnail && video.thumbnail) {
-          thumbnail = video.thumbnail;
-        }
-        const day = video.published.slice(0, 10);
-        if (day > latestPublishedAt) {
-          latestPublishedAt = day;
-        }
+  useAbortableEffect(
+    async (signal) => {
+      if (!enabled) {
+        return;
       }
-      return { id: record.id, title: record.name, thumbnail, videoCount: (record.videos ?? []).length, latestPublishedAt };
-    });
-    summaries.sort((a, b) => b.latestPublishedAt.localeCompare(a.latestPublishedAt) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
-    return summaries;
-  }, [query.data, videos]);
+      do {
+        try {
+          const result = await api.channels.series(channelId, { signal });
+          if (signal.aborted) {
+            return;
+          }
+          setSeries(result.series);
+          setSync(result.sync);
+          setError(false);
+          if (!channelSyncing && result.sync.status === 'complete') {
+            return;
+          }
+        } catch {
+          if (!signal.aborted) {
+            setError(true);
+          }
+          return;
+        }
+        await sleep(2000, signal);
+      } while (!signal.aborted);
+    },
+    [channelId, enabled, channelSyncing, attempt],
+  );
+
+  return { series, sync, error, retry: () => setAttempt((value) => value + 1) };
 }

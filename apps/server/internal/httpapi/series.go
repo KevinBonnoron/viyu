@@ -7,6 +7,7 @@ import (
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/accounts"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/apierr"
+	"github.com/KevinBonnoron/viyu/apps/server/internal/catalog"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/jobs"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/series"
@@ -64,6 +65,49 @@ func (s *Server) listSeries(e *core.RequestEvent) error {
 		summaries = append(summaries, addressed(item).Summary)
 	}
 	return s.respond(e, http.StatusOK, seriesList{Series: summaries, Sync: overview.Sync(), Analysis: overview})
+}
+
+func (s *Server) channelSeries(e *core.RequestEvent) error {
+	noStore(e)
+	record, err := s.Store.Channel(e.Request.PathValue("id"))
+	if err != nil {
+		return lookupFailure(err, "Channel")
+	}
+	if !catalog.VisibleTo(record, viewerID(e)) {
+		return apierr.NotFound("Channel")
+	}
+	p, ok := s.Platforms.Get(record.GetString("platform"))
+	if !ok || p.CatalogSync() == nil {
+		return apierr.NotFound("Channel")
+	}
+	if err := s.Sources.RequireEnabled(e.Auth.Id, p.ID()); err != nil {
+		return err
+	}
+	conn, err := s.connectionOf(e)
+	if err != nil {
+		return err
+	}
+	if conn.Connected() && conn.Source != p.ID() {
+		return apierr.InvalidInput("The selected source and platform must match.")
+	}
+	overview, err := s.Analysis.Overview([]*core.Record{record})
+	if err != nil {
+		return apierr.Internal("Failed to load playlists", err)
+	}
+	items, err := s.Series.ChannelSummariesData(record)
+	if err != nil {
+		return err
+	}
+	s.Analysis.ApplyEpisodes(items)
+	series.Sort(items)
+	summaries := make([]series.Summary, 0, len(items))
+	for _, item := range items {
+		summaries = append(summaries, addressed(item).Summary)
+	}
+	return s.respond(e, http.StatusOK, struct {
+		Series []series.Summary `json:"series"`
+		Sync   jobs.Sync        `json:"sync"`
+	}{summaries, overview.Sync()})
 }
 
 // analysable keeps the channels whose platform can list a catalog, once each: the others have no series to
@@ -169,11 +213,8 @@ func (s *Server) setSeriesOCR(e *core.RequestEvent) error {
 	return s.respond(e, http.StatusOK, ocrSetting{Enabled: *input.Enabled, Available: s.OCR != nil})
 }
 
-// channelSync answers GET /api/channel/{id}?sync=1: the whole catalog of the channel as the background
-// synchronization has it so far, and where that synchronization stands. A connected request (?source=) gets the
-// catalog as the account sees it, kept in memory for the connection; a public one the stored catalog, whose
-// series the analysis is woken to refresh.
-func (s *Server) channelSync(e *core.RequestEvent, record *core.Record, p platform.Platform) error {
+// channelSync answers a bounded page of the synchronized channel catalog.
+func (s *Server) channelSync(e *core.RequestEvent, record *core.Record, p platform.Platform, page, limit int, query string, ascending bool) error {
 	noStore(e)
 	if p.CatalogSync() == nil {
 		return apierr.InvalidInput("This platform does not support background channel synchronization.")
@@ -194,7 +235,7 @@ func (s *Server) channelSync(e *core.RequestEvent, record *core.Record, p platfo
 			return err
 		}
 	}
-	snapshot, err := s.Catalogs.Snapshot(key, jobs.SnapshotOptions{Retry: e.Request.URL.Query().Get("retry") == "1"})
+	snapshot, err := s.Catalogs.Snapshot(key, jobs.SnapshotOptions{Retry: e.Request.URL.Query().Get("retry") == "1", Page: page, Limit: limit, Query: query, Ascending: ascending})
 	if err != nil {
 		return err
 	}
@@ -204,8 +245,7 @@ func (s *Server) channelSync(e *core.RequestEvent, record *core.Record, p platfo
 			return err
 		}
 	} else {
-		// The page view infers and stores the series, so the channel's Playlists tab has them without a
-		// dedicated endpoint; the subscription-scoped worker alone would never reach an unsubscribed channel.
+		// Wake analysis for unsubscribed channels viewed directly.
 		s.Analysis.Wake(record.Id)
 	}
 	return s.respond(e, http.StatusOK, snapshot)
