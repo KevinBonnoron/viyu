@@ -24,6 +24,8 @@ type entry struct {
 	validUntil time.Time
 	resources  *resourceSet
 	generation *generation
+	playlistMu sync.Mutex
+	playlists  map[string]*playlistIndex
 }
 
 func newEntry(manifest platform.Manifest, maxResources int) *entry {
@@ -47,8 +49,7 @@ func (e *entry) resource(id string) (resource, bool) {
 		issued = e.generation
 	}
 	item := resource{id: id, url: token.URL, parent: token.Parent, semantic: token.Semantic, generation: issued}
-	e.resources.rememberChild(id, item.url, item.parent, item.semantic, issued, false)
-	return item, true
+	return e.resources.rememberIfAbsent(item), true
 }
 
 func manifestExpiry(raw string) time.Time {
@@ -99,12 +100,30 @@ func newResourceSet(max int) *resourceSet {
 }
 
 func (s *resourceSet) remember(id, remote string) { s.rememberChild(id, remote, "", "", nil, false) }
+func (s *resourceSet) rememberIfAbsent(item resource) resource {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if element := s.items[item.id]; element != nil {
+		s.touch(element)
+		return *element.Value.(*resource)
+	}
+	s.rememberLocked(item.id, item.url, item.parent, item.semantic, item.generation, item.retained)
+	return item
+}
 
 func (s *resourceSet) rememberChild(id, remote, parent, semantic string, generation *generation, retained bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.rememberLocked(id, remote, parent, semantic, generation, retained)
+}
+
+func (s *resourceSet) rememberLocked(id, remote, parent, semantic string, generation *generation, retained bool) {
 	if element := s.items[id]; element != nil {
 		item := element.Value.(*resource)
+		if item.generation != nil && generation != nil && item.generation.id > generation.id {
+			s.touch(element)
+			return
+		}
 		item.url = remote
 		item.parent = parent
 		if item.semantic != semantic {

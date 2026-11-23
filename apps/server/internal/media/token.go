@@ -14,6 +14,8 @@ import (
 
 const maxResourceTokenSize = 32 * 1024
 
+var errResourceTokenTooLarge = errors.New("resource token too large")
+
 type resourceToken struct {
 	URL        string `json:"u"`
 	Parent     string `json:"p,omitempty"`
@@ -47,8 +49,11 @@ func validResourceTokenURL(raw string) bool {
 }
 
 func (t *resourceTokens) seal(value resourceToken) (string, error) {
-	if value.Generation == 0 || len(value.URL)+len(value.Parent)+len(value.Semantic) > maxResourceTokenSize || !validResourceTokenURL(value.URL) {
+	if value.Generation == 0 || !validResourceTokenURL(value.URL) {
 		return "", errors.New("invalid resource token payload")
+	}
+	if len(value.URL)+len(value.Parent)+len(value.Semantic) > maxResourceTokenSize {
+		return "", errResourceTokenTooLarge
 	}
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -59,7 +64,7 @@ func (t *resourceTokens) seal(value resourceToken) (string, error) {
 		return "", t.err
 	}
 	if 2+base64.RawURLEncoding.EncodedLen(t.aead.NonceSize()+len(payload)+t.aead.Overhead()) > maxResourceTokenSize {
-		return "", errors.New("resource token too large")
+		return "", errResourceTokenTooLarge
 	}
 	nonce := make([]byte, t.aead.NonceSize(), t.aead.NonceSize()+len(payload)+t.aead.Overhead())
 	if _, err := rand.Read(nonce); err != nil {
