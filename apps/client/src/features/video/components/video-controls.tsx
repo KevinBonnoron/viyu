@@ -69,6 +69,7 @@ export function VideoControls({
   onToggleFullscreen,
   version,
   quality,
+  actualQuality,
   qualities,
   onQualityChange,
   audioTracks,
@@ -96,6 +97,7 @@ export function VideoControls({
   onToggleFullscreen: () => Promise<void>;
   version: number;
   quality: string;
+  actualQuality: number | null;
   qualities: number[];
   onQualityChange: (quality: string) => void;
   audioTracks: AudioOption[];
@@ -826,7 +828,12 @@ export function VideoControls({
   const selectedAudio = audioTracks.find((track) => track.selected);
   const rateLabel = (rate: number) => (rate === 1 ? t('player.speed.normal') : `${rate.toLocaleString(language, { maximumFractionDigits: 2 })}×`);
   const settingsEntries = [
-    { id: 'quality', label: t('player.quality.label'), value: quality === 'auto' ? t('player.quality.auto') : `${quality}p`, disabled: qualities.length === 0 },
+    {
+      id: 'quality',
+      label: t('player.quality.label'),
+      value: quality === 'auto' ? `${t('player.quality.auto')}${actualQuality ? ` · ${actualQuality}p` : ''}` : actualQuality ? `${actualQuality}p` : '—',
+      disabled: qualities.length === 0,
+    },
     {
       id: 'audio',
       label: t('player.audio.label'),
@@ -1058,7 +1065,7 @@ export function VideoControls({
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10 focus-visible:bg-white/10"
                   >
                     <span className="size-4 shrink-0">{quality === option && <Check aria-hidden="true" className="size-4 text-primary" />}</span>
-                    {option === 'auto' ? t('player.quality.auto') : `${option}p`}
+                    {option === 'auto' ? `${t('player.quality.auto')}${quality === 'auto' && actualQuality ? ` · ${actualQuality}p` : ''}` : `${option}p`}
                   </button>
                 ))}
               {menuPage === 'audio' &&

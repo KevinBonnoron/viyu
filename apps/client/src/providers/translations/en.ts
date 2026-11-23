@@ -179,10 +179,10 @@ export const en = {
   'player.chat.replyingTo': 'In reply to',
   'player.chat.error': 'Could not load the chat replay.',
   'player.quality.label': 'Quality',
-  'player.quality.auto': 'Auto (maximum)',
+  'player.quality.auto': 'Auto',
   'settings.playback.defaultQuality': 'Default video quality',
   'settings.playback.defaultQualityDescription':
-    'Auto always chooses the highest available quality. A fixed resolution uses the best available quality up to that limit.',
+    'Auto adapts quality to playback conditions. A fixed resolution uses the best available quality up to that limit.',
   'player.controls.player': 'Viyu video player',
   'player.sponsor.skip': 'Skip sponsor',
   'player.sponsor.skipped': 'Ad skipped',

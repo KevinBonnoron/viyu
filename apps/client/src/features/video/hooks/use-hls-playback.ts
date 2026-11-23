@@ -4,7 +4,6 @@ import { type AudioOption, audioTrackIndex, audioTrackOptions, originalAudioTrac
 import { type ApiError, apiErrorFrom } from '@/lib/api-error';
 import { apiUrl, pb } from '@/lib/pocketbase';
 
-/** The server's answer to a stream request hls.js gave up on (`{code, message}` with its status), when there is one. */
 function streamFailure(data: ErrorData): ApiError | undefined {
   const status = data.response?.code;
   if (!status || status < 400) {
@@ -21,7 +20,6 @@ function streamFailure(data: ErrorData): ApiError | undefined {
   return apiErrorFrom(status, body);
 }
 
-/** Whether a request of hls.js goes to the server's own stream routes (never a third-party URL): only those carry the session token. */
 function isStreamRequest(url: string): boolean {
   return url.startsWith(apiUrl('/api/stream/'));
 }
@@ -56,7 +54,6 @@ export function useHlsPlayback({
   audioLanguage: string;
   originalLanguage: string;
   resumeAt: RefObject<number>;
-  /** Called when playback cannot go on; `failure` is the server's answer when a request of the stream failed. */
   onFatal: (failure?: ApiError) => void;
 }) {
   const engine = useRef<Hls | null>(null);
@@ -65,6 +62,7 @@ export function useHlsPlayback({
   const original = useRef(originalLanguage);
   const fatal = useRef(onFatal);
   const [qualities, setQualities] = useState<number[]>([]);
+  const [actualQuality, setActualQuality] = useState<number | null>(null);
   const [audioTracks, setAudioTracks] = useState<AudioOption[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -75,8 +73,8 @@ export function useHlsPlayback({
     selectedQuality.current = quality;
     const hls = engine.current;
     if (hls?.levels.length) {
-      const level = playbackLevel(hls.levels, quality);
-      if (level >= 0) {
+      const level = quality === 'auto' ? -1 : playbackLevel(hls.levels, quality);
+      if (quality === 'auto' || level >= 0) {
         hls.currentLevel = level;
       }
     }
@@ -96,12 +94,13 @@ export function useHlsPlayback({
 
   useEffect(() => {
     const video = videoRef.current;
+    setActualQuality(null);
+    setQualities([]);
+    setAudioTracks([]);
     if (!url || !video) {
       return;
     }
     let active = true;
-    setQualities([]);
-    setAudioTracks([]);
     setLoading(true);
     // hls.js (MSE) is the only path: a native HLS player (Safari) loads its manifest and segments without any way to set an
     // `Authorization` header, and the stream routes accept nothing else. A browser without MSE cannot play the stream.
@@ -110,14 +109,12 @@ export function useHlsPlayback({
       fatal.current();
       return;
     }
-    // The session token is read when each request is made, so a token refreshed mid-playback is the one used; only requests to the server's own stream routes carry it.
     const authorize = (requestUrl: string, headers: Headers) => {
       if (isStreamRequest(requestUrl)) {
         headers.set('Authorization', `Bearer ${pb.authStore.token}`);
       }
       return headers;
     };
-    // Auto is explicitly the maximum resolution, not bandwidth adaptation.
     const hls = new Hls({
       autoStartLoad: false,
       capLevelToPlayerSize: false,
@@ -160,12 +157,19 @@ export function useHlsPlayback({
         fatal.current();
         return;
       }
-      hls.startLevel = level;
-      hls.currentLevel = level;
+      hls.startLevel = selectedQuality.current === 'auto' ? -1 : level;
+      hls.currentLevel = selectedQuality.current === 'auto' ? -1 : level;
       selectAudio();
       // With no position to resume, let hls.js choose: the start of a VOD, the live edge of a stream.
       hls.startLoad(resumeAt.current > 0 ? resumeAt.current : -1);
       setLoading(false);
+    });
+    hls.on(Hls.Events.FRAG_CHANGED, (_, data) => {
+      if (active) {
+        const level = hls.levels[data.frag.level];
+        const height = level ? resolution(level) : 0;
+        setActualQuality(height > 0 ? height : null);
+      }
     });
     // A fatal error is recovered from once per kind before giving up; playback progressing again re-arms the recovery.
     const recovery = { media: false, network: false, at: -1 };
@@ -193,7 +197,6 @@ export function useHlsPlayback({
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !recovery.network) {
         recovery.network = true;
         recovered();
-        // Before the manifest is known there is no fragment loading to resume: ask for the manifest again.
         if (hls.levels.length === 0) {
           hls.loadSource(url);
         } else {
@@ -217,5 +220,5 @@ export function useHlsPlayback({
     };
   }, [url, version, videoRef, resumeAt]);
 
-  return { qualities, audioTracks, loading };
+  return { qualities, actualQuality, audioTracks, loading };
 }

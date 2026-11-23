@@ -182,10 +182,10 @@ export const fr = {
   'player.chat.replyingTo': 'En réponse à',
   'player.chat.error': 'Impossible de charger le replay du chat.',
   'player.quality.label': 'Qualité',
-  'player.quality.auto': 'Auto (maximum)',
+  'player.quality.auto': 'Auto',
   'settings.playback.defaultQuality': 'Qualité vidéo par défaut',
   'settings.playback.defaultQualityDescription':
-    'Auto choisit toujours la meilleure qualité disponible. Une résolution fixe utilise la meilleure qualité disponible jusqu’à cette limite.',
+    'Auto adapte la qualité aux conditions de lecture. Une résolution fixe utilise la meilleure qualité disponible jusqu’à cette limite.',
   'player.controls.player': 'Lecteur vidéo Viyu',
   'player.sponsor.skip': 'Passer la publicité',
   'player.sponsor.skipped': 'Publicité passée',
