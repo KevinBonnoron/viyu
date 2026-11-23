@@ -485,7 +485,7 @@ func (p *Proxy) recoverResource(ctx context.Context, key Key, source string, sta
 		for i := len(chain) - 1; i >= 0; i-- {
 			remote, err = p.findResource(ctx, key, fresh, remote, chain[i])
 			if err != nil {
-				if i == len(chain)-1 && errors.Is(err, errPlaylistRefused) && !refreshedRoot {
+				if errors.Is(err, errPlaylistRefused) && !refreshedRoot {
 					refreshedRoot = true
 					fresh, err = p.refresh(ctx, key, source, fresh)
 					if err != nil {
