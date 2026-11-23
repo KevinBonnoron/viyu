@@ -120,10 +120,12 @@ func TestRecommendationsPinsEligibleContinuationBeyondCandidateLimit(t *testing.
 	profile := f.profile(user, "Viewer")
 	ids := f.put(
 		video{id: "anchor", channel: "channel", published: "2017-01-01"},
-		video{id: "next", channel: "channel", published: "2017-01-02"},
+		video{id: "next", channel: "channel", published: "2017-12-01"},
 	)
+	// Nearer, unrelated videos fill the forward window: the successor must be
+	// fetched separately and pinned above their stronger temporal ranking.
 	for i := range candidatesPerQuery + 1 {
-		f.put(video{id: fmt.Sprintf("new-%03d", i), channel: "channel", published: "2024-01-01"})
+		f.put(video{id: fmt.Sprintf("new-%03d", i), channel: "channel", published: "2017-06-01"})
 	}
 	channel := f.channel(alpha, "channel", time.Hour)
 	f.save("series", map[string]any{"channel": channel.Id, "name": "Adventure", "curated": true, "videos": []string{ids["anchor"], ids["next"]}})
