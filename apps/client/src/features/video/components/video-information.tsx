@@ -170,15 +170,17 @@ export function VideoInformation({
             <Share2 aria-hidden="true" className="size-4" />
             {t('player.share')}
           </Button>
-          <fieldset className="inline-flex shrink-0 overflow-hidden rounded-full border bg-card" aria-label={t('player.reactions.label')}>
+          <fieldset className="inline-flex h-8 shrink-0 overflow-hidden rounded-full border bg-card" aria-label={t('player.reactions.label')}>
             {(['like', 'dislike'] as const).map((kind) => {
               const count = kind === 'like' ? video.likeCount : (video.dislikeCount ?? communityDislikes);
               const communityEstimate = kind === 'dislike' && video.dislikeCount == null && communityDislikes != null;
               const Icon = kind === 'like' ? ThumbsUp : ThumbsDown;
               return (
-                <button
+                <Button
                   key={kind}
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   aria-label={t(kind === 'like' ? 'player.like' : 'player.dislike')}
                   aria-pressed={reaction === kind}
                   disabled={pending}
@@ -190,14 +192,14 @@ export function VideoInformation({
                   aria-description={communityEstimate ? t('player.reactions.communityDislikes') : undefined}
                   onClick={() => onReact(kind)}
                   className={cn(
-                    'inline-flex h-10 items-center gap-2 px-4 text-sm tabular-nums transition-colors hover:bg-muted focus-visible:ring-inset disabled:cursor-wait disabled:opacity-50',
+                    'h-full rounded-none tabular-nums hover:bg-muted focus-visible:ring-inset disabled:cursor-wait',
                     kind === 'dislike' && 'border-l',
                     reaction === kind && 'bg-primary/10 text-primary',
                   )}
                 >
                   <Icon aria-hidden="true" className={cn('size-4', reaction === kind && 'fill-current')} />
                   {count != null && <span>{`${communityEstimate ? '≈ ' : ''}${formatCompactNumber(count, language)}`}</span>}
-                </button>
+                </Button>
               );
             })}
           </fieldset>
