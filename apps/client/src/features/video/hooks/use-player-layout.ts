@@ -1,4 +1,5 @@
 import { type DependencyList, type RefObject, useLayoutEffect, useState } from 'react';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 /** The smallest player height, in pixels, that still leaves room for the page footer: below it the page is allowed to scroll instead. */
 const MIN_FULL_PAGE_PLAYER_HEIGHT = 240;
@@ -60,31 +61,32 @@ export function usePlayerLayout(
   return maxHeight;
 }
 
-/** Available page width that leaves room for the 22rem panel, its rail and a usable video column. */
 const MIN_BESIDE_WIDTH = 960;
-
-/** Keep details beside the video on wider page columns, regardless of window height or scroll position. */
-export function decideBeside(contentWidth: number): boolean {
-  return contentWidth >= MIN_BESIDE_WIDTH;
-}
+const MIN_BESIDE_ASPECT_RATIO = 16 / 10;
 
 /** `beside` or `stacked` for the player root, measured on the element and kept up to date as it or the window resizes. */
 export function useSidePanelPlacement(rootRef: RefObject<HTMLElement | null>): 'beside' | 'stacked' {
   const [placement, setPlacement] = useState<'beside' | 'stacked'>('stacked');
+  const desktop = useMediaQuery('(min-width: 768px) and (hover: hover) and (pointer: fine)');
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) {
       return;
     }
     const update = () => {
-      setPlacement(decideBeside(root.getBoundingClientRect().width) ? 'beside' : 'stacked');
+      const bounds = root.getBoundingClientRect();
+      const availableHeight = window.innerHeight - (bounds.top + window.scrollY);
+      const fitsBeside = bounds.width >= MIN_BESIDE_WIDTH && bounds.width >= availableHeight * MIN_BESIDE_ASPECT_RATIO;
+      setPlacement(desktop && fitsBeside ? 'beside' : 'stacked');
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(root);
+    window.addEventListener('resize', update);
     return () => {
       observer.disconnect();
+      window.removeEventListener('resize', update);
     };
-  }, [rootRef]);
+  }, [desktop, rootRef]);
   return placement;
 }
