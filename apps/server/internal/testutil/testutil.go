@@ -5,6 +5,7 @@ package testutil
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -14,11 +15,68 @@ import (
 	_ "github.com/KevinBonnoron/viyu/apps/server/internal/migrations"
 )
 
+var schemaFixture = sync.OnceValues(func() (map[string][]byte, error) {
+	dir, err := os.MkdirTemp("", "viyu-schema-fixture-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	app := core.NewBaseApp(core.BaseAppConfig{DataDir: dir})
+	if err := app.Bootstrap(); err != nil {
+		return nil, err
+	}
+	if err := app.RunAllMigrations(); err != nil {
+		_ = app.ResetBootstrapState()
+		return nil, err
+	}
+	if err := app.ResetBootstrapState(); err != nil {
+		return nil, err
+	}
+	files := make(map[string][]byte, 2)
+	for _, name := range []string{"data.db", "auxiliary.db"} {
+		files[name], err = os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+})
+
+// CopySchemaFixture copies a migrated, closed schema into a fresh data directory.
+// Each caller gets independent databases; existing database files are never overwritten.
+func CopySchemaFixture(t testing.TB, dir string) {
+	t.Helper()
+	files, err := schemaFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range files {
+		f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, writeErr := f.Write(data)
+		closeErr := f.Close()
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}
+}
+
 // NewApp returns a bootstrapped application on a temporary data directory with the real schema applied.
 // It is shut down when the test ends.
 func NewApp(t testing.TB) core.App {
 	t.Helper()
-	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
+	dir := t.TempDir()
+	CopySchemaFixture(t, dir)
+	app := core.NewBaseApp(core.BaseAppConfig{DataDir: dir})
 	if err := app.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

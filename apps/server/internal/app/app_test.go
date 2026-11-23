@@ -35,3 +35,24 @@ func TestEveryNetworkRouteNeedsAnAccount(t *testing.T) {
 		t.Fatalf("the registration status is public: %d", res.Code)
 	}
 }
+
+func TestAppFixturesKeepAccountsIsolated(t *testing.T) {
+	t.Parallel()
+	first, firstHandler := newApp(t)
+	second, secondHandler := newApp(t)
+	user := testUser(t, first, "fixture-isolation@example.test")
+	token := tokenOf(t, user)
+	if _, err := second.FindRecordById("users", user.Id); err == nil {
+		t.Fatal("an account created in one fixture appeared in another")
+	}
+	if res := send(t, secondHandler, http.MethodGet, "/api/account", token, ""); res.Code != http.StatusUnauthorized {
+		t.Fatalf("another fixture accepted the account token: %d %s", res.Code, res.Body)
+	}
+	other := testUser(t, second, "fixture-isolation@example.test")
+	if _, err := first.FindRecordById("users", other.Id); err == nil {
+		t.Fatal("an account created in the second fixture appeared in the first")
+	}
+	if res := send(t, firstHandler, http.MethodGet, "/api/account", tokenOf(t, other), ""); res.Code != http.StatusUnauthorized {
+		t.Fatalf("first fixture accepted another account's token: %d %s", res.Code, res.Body)
+	}
+}
