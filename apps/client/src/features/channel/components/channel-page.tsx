@@ -160,9 +160,6 @@ function Channel({
         <>
           {waitingForChannel ? (
             <section aria-live="polite" aria-busy="true" aria-label={t('channel.loading')}>
-              <PageTitle>
-                <Skeleton aria-hidden="true" className="h-7 w-48 max-w-full" />
-              </PageTitle>
               <ChannelHeaderSkeleton />
             </section>
           ) : (
@@ -314,7 +311,6 @@ function Channel({
   );
 }
 
-/** The channel's header card as it will look: avatar, a few lines of text and the subscribe button. The title lives in the topbar. */
 function ChannelHeaderSkeleton() {
   return (
     <div
@@ -322,34 +318,48 @@ function ChannelHeaderSkeleton() {
       className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-2xl border bg-card p-4 sm:gap-5 sm:p-6 lg:grid-cols-[auto_minmax(0,1fr)_auto]"
     >
       <Skeleton className="size-16 rounded-full sm:size-20" />
-      <div className="min-w-0 space-y-2">
-        <Skeleton className="h-4 w-2/5" />
-        <Skeleton className="h-4 w-full max-w-md" />
+      <div className="min-w-0">
+        <Skeleton className="h-6 w-48 max-w-full desktop:h-9 desktop:w-64 desktop:lg:h-10.5" />
+        <Skeleton className="h-5 w-28 max-w-full" />
+        <div className="mt-1 space-y-2">
+          <Skeleton className="h-4 w-full max-w-md" />
+          <Skeleton className="h-4 w-3/4 max-w-sm" />
+        </div>
       </div>
-      <Skeleton className="col-span-2 h-10 w-32 rounded-full lg:col-span-1" />
+      <div className="col-span-2 flex lg:col-span-1 lg:justify-end">
+        <Skeleton className="h-10 grow rounded-full lg:w-32 lg:grow-0" />
+      </div>
+      <div className="col-span-full grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4 sm:flex sm:flex-wrap sm:gap-x-8">
+        {[0, 1, 2, 3].map((item) => (
+          <div key={item} className="space-y-1">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-5 w-24" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-/** The whole page before any data: topbar title, header card, tabs with their search box, then the videos. */
 export function ChannelSkeleton() {
   return (
     <>
-      <PageTitle>
-        <Skeleton aria-hidden="true" className="h-7 w-48 max-w-full" />
-      </PageTitle>
       <ChannelHeaderSkeleton />
       <div aria-hidden="true" className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b">
           <div className="flex gap-2">
-            <div className="px-3 py-2">
-              <Skeleton className="h-5 w-20" />
-            </div>
-            <div className="px-3 py-2">
+            <div className="flex items-center gap-2 border-b-2 border-transparent px-3 py-2">
               <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-5 w-10 rounded-full" />
+            </div>
+            <div className="flex items-center gap-2 border-b-2 border-transparent px-3 py-2">
+              <Skeleton className="h-5 w-14" />
+              <Skeleton className="h-5 w-8 rounded-full" />
             </div>
           </div>
-          <Skeleton className="mb-1 h-10 w-full rounded-lg sm:w-72" />
+          <div className="mb-1 flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <Skeleton className="h-10 min-w-0 flex-1 rounded-lg sm:w-72 sm:flex-none" />
+          </div>
         </div>
         <VideoGridSkeleton />
       </div>
