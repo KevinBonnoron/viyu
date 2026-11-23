@@ -52,6 +52,13 @@ func (s *Server) channel(e *core.RequestEvent) error {
 	if e.Request.URL.Query().Get("sync") == "1" {
 		return s.channelSync(e, record, p, page, limit, query, ascending)
 	}
+	connInfo, err := s.connectionOf(e)
+	if err != nil {
+		return err
+	}
+	if connInfo.Connected() && p.CatalogSync() != nil {
+		return s.channelSync(e, record, p, page, limit, query, ascending)
+	}
 	conn, session, cleanup, err := s.session(e)
 	if err != nil {
 		return err

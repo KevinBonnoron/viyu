@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Snackbar } from '@/components/ui/snackbar';
 import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { VirtualGrid } from '@/components/virtual-grid';
+import { catalogPolling, loadCatalogPrefix } from '@/features/channel/catalog-prefix';
 import { VideoGrid } from '@/features/video';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
 import { useChannelLive } from '@/hooks/useChannelLive';
@@ -83,7 +84,7 @@ function Channel({
   const [requested, setRequested] = useState<{ query: string; order: ChronologicalOrder; page: number }>({ query: '', order: 'desc', page: 1 });
   const [resultKey, setResultKey] = useState<{ query: string; order: ChronologicalOrder } | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const loaded = useRef<{ query: string; order: ChronologicalOrder; page: number; videos: VideoResult[] } | null>(null);
+  const loaded = useRef<{ query: string; order: ChronologicalOrder; page: number; videos: VideoResult[]; revision?: string; unsettled: boolean } | null>(null);
   const lastRetry = useRef(0);
   const page = requested.query === query && requested.order === order ? requested.page : 1;
   const syncing = sync?.status === 'pending' || sync?.status === 'running';
@@ -103,45 +104,46 @@ function Channel({
       let retrySync = retry !== lastRetry.current;
       let firstPass = true;
       let crawling = true;
+      let needsConfirmation = !!(loaded.current?.query === query && loaded.current.order === order && loaded.current.unsettled);
       while (crawling && !signal.aborted) {
         try {
           const previous = loaded.current;
           const append = firstPass && previous?.query === query && previous.order === order && previous.page < page;
-          const catalog = new Map<string, VideoResult>(append ? previous.videos.map((video) => [`${video.platform}:${video.id}`, video]) : []);
-          const pages = [];
-          for (let current = append ? previous.page + 1 : 1; current <= page; current++) {
-            const result = await api.channels.get(channelId, {
+          let retryPending = retrySync;
+          const result = await loadCatalogPrefix(page, append ? previous : null, async (current) => {
+            const data = await api.channels.get(channelId, {
               source,
               signal,
               sync: platform === 'youtube',
-              retry: retrySync && current === (append ? previous.page + 1 : 1),
+              retry: retryPending,
               page: current,
               limit: 30,
               q: query,
               order,
             });
-            for (const video of result.videos) {
-              catalog.set(`${video.platform}:${video.id}`, video);
-            }
-            pages.push(result);
-            if (!result.hasMore) {
-              break;
-            }
-          }
-          const data = pages[pages.length - 1];
+            retryPending = false;
+            return data;
+          });
           if (signal.aborted) {
             return;
           }
-          lastRetry.current = retry;
-          setChannel((current) => data.channel ?? current);
-          const nextVideos = Array.from(catalog.values());
-          loaded.current = { query, order, page: data.page, videos: nextVideos };
-          setVideos(nextVideos);
-          setResultKey({ query, order });
-          setHasMore(data.hasMore);
-          setHasResult(true);
-          setSync(data.sync ?? null);
-          crawling = data.sync?.status === 'pending' || data.sync?.status === 'running';
+          if (result === null) {
+            needsConfirmation = true;
+          } else {
+            const { prefix, last: data, sawSync } = result;
+            const active = data.sync?.status === 'pending' || data.sync?.status === 'running';
+            const polling = catalogPolling(needsConfirmation, sawSync, active);
+            needsConfirmation = polling.needsConfirmation;
+            lastRetry.current = retry;
+            setChannel((current) => data.channel ?? current);
+            loaded.current = { query, order, ...prefix, unsettled: polling.crawling };
+            setVideos(prefix.videos);
+            setResultKey({ query, order });
+            setHasMore(data.hasMore);
+            setHasResult(true);
+            setSync(data.sync ?? null);
+            crawling = polling.crawling;
+          }
         } catch (failure: unknown) {
           crawling = false;
           if (!signal.aborted) {

@@ -339,6 +339,26 @@ func TestChannelCatalogPagesSearchAndSeriesScope(t *testing.T) {
 	if len(first.Videos) != 30 || len(second.Videos) != 30 || len(last.Videos) != 5 || !first.HasMore || !second.HasMore || last.HasMore || first.Total != 65 || first.Sync.Loaded != 65 {
 		t.Fatalf("pages: %+v %+v %+v", first, second, last)
 	}
+	if first.Revision == "" || first.Revision != second.Revision || first.Revision != last.Revision {
+		t.Fatalf("public revision not stable across pages: %q %q %q", first.Revision, second.Revision, last.Revision)
+	}
+	moved, err := app.FindRecordById("videos", last.Videos[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved.Set("published", "")
+	if err := app.Save(moved); err != nil {
+		t.Fatal(err)
+	}
+	before := getPage("")
+	moved.Set("published", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err := app.Save(moved); err != nil {
+		t.Fatal(err)
+	}
+	after, afterSecond := getPage(""), getPage("&page=2")
+	if before.Revision == after.Revision || after.Revision != afterSecond.Revision || after.Videos[0].ID != moved.Id {
+		t.Fatalf("date move did not change the shared revision: before=%q after=%+v", before.Revision, after)
+	}
 	seen := map[string]bool{}
 	for _, page := range []jobs.CatalogPage{first, second, last} {
 		for _, video := range page.Videos {
@@ -383,6 +403,9 @@ func TestChannelCatalogPagesSearchAndSeriesScope(t *testing.T) {
 	if search.Total != 1 || search.Sync.Loaded != 65 || len(search.Videos) != 1 || search.Videos[0].ID != target.ID {
 		t.Fatalf("folded search: %+v", search)
 	}
+	if search.Revision == desc.Revision {
+		t.Fatal("title change did not change the catalog revision")
+	}
 	owner := testUser(t, app, "paging-private@example.test")
 	record.Set("owners", []string{owner.Id})
 	if err := app.Save(record); err != nil {
@@ -391,6 +414,9 @@ func TestChannelCatalogPagesSearchAndSeriesScope(t *testing.T) {
 	hidden := getPage("&q=ete%20special")
 	if hidden.Total != 0 || hidden.Sync.Loaded != 64 || len(hidden.Videos) != 0 {
 		t.Fatalf("private catalog member leaked: %+v", hidden)
+	}
+	if hidden.Revision == search.Revision {
+		t.Fatal("visibility change did not change the catalog revision")
 	}
 	acctExpect(t, request(t, handler, path+"?sync=1&limit=51", ""), http.StatusBadRequest, "INVALID_SOURCE_INPUT")
 	acctExpect(t, request(t, handler, path+"?sync=1&page=0", ""), http.StatusBadRequest, "INVALID_SOURCE_INPUT")
