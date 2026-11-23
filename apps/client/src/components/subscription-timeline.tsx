@@ -1,6 +1,7 @@
-import { eq, ilike, inArray, like, or, useLiveInfiniteQuery } from '@tanstack/react-db';
+import { eq, gt, ilike, inArray, like, or, useLiveInfiniteQuery } from '@tanstack/react-db';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { videoCollection } from '@/collections/video.collection';
+import type { ChronologicalOrder } from '@/components/chronological-order-select';
 import { ErrorSnackbar } from '@/components/error-snackbar';
 import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { VideoGrid } from '@/features/video/components/video-grid';
@@ -31,6 +32,8 @@ function ChannelFeed({
   term,
   matchingChannelIds,
   hideSubscriberOnly,
+  order,
+  unknown,
   report,
 }: {
   index: number;
@@ -38,6 +41,8 @@ function ChannelFeed({
   term: string;
   matchingChannelIds: string[];
   hideSubscriberOnly: boolean;
+  order: ChronologicalOrder;
+  unknown: boolean;
   report: (index: number, state: FeedState) => void;
 }) {
   // PocketBase folds case for ASCII only: a term with other characters is matched case-sensitively there and here.
@@ -55,7 +60,12 @@ function ChannelFeed({
           })
         : channelVideos;
       const visible = hideSubscriberOnly ? searched.where(({ videos }) => eq(videos.subscriber_only, false)) : searched;
-      return visible.orderBy(({ videos }) => videos.published, 'desc').orderBy(({ videos }) => videos.id);
+      return unknown
+        ? visible.where(({ videos }) => eq(videos.published, '')).orderBy(({ videos }) => videos.id)
+        : visible
+            .where(({ videos }) => gt(videos.published, ''))
+            .orderBy(({ videos }) => videos.published, order)
+            .orderBy(({ videos }) => videos.id);
     },
     { pageSize: TIMELINE_PAGE_SIZE },
   );
@@ -69,7 +79,7 @@ function ChannelFeed({
 }
 
 /**
- * Newest-first timeline of the subscribed channels, read page by page from the `videos` collection (no filter is ever
+ * Timeline of the subscribed channels, read page by page from the `videos` collection (no filter is ever
  * built over more than `CHANNELS_PER_FEED` channels: the channels are cut into slices, each slice pages on its own,
  * and the timeline merges them by publication, showing only what no unloaded page of any slice could precede). The
  * next pages load when the end of the grid scrolls into view. Streams in progress (`liveVideos`) come first.
@@ -79,6 +89,7 @@ export function SubscriptionVideoPages({
   channels,
   query,
   hideSubscriberOnly,
+  order,
   liveVideos,
   excludedIds,
   visible,
@@ -92,6 +103,7 @@ export function SubscriptionVideoPages({
   channels: ReadonlyMap<string, ChannelRecord>;
   query: string;
   hideSubscriberOnly: boolean;
+  order: ChronologicalOrder;
   liveVideos: VideoResult[];
   /** `videos` record ids shown elsewhere on the page (the continue-watching row): left out of the timeline. */
   excludedIds: ReadonlySet<string>;
@@ -104,6 +116,7 @@ export function SubscriptionVideoPages({
   const { t } = useI18n();
   const [scope] = useState(channelIds);
   const [feeds, setFeeds] = useState<Record<number, FeedState>>({});
+  const [unknownFeeds, setUnknownFeeds] = useState<Record<number, FeedState>>({});
   const [retry, setRetry] = useState(0);
   const slices = useMemo(() => {
     const result: string[][] = [];
@@ -120,19 +133,36 @@ export function SubscriptionVideoPages({
     (index: number, state: FeedState) => setFeeds((previous) => (previous[index] === state ? previous : { ...previous, [index]: state })),
     [],
   );
+  const reportUnknown = useCallback(
+    (index: number, state: FeedState) => setUnknownFeeds((previous) => (previous[index] === state ? previous : { ...previous, [index]: state })),
+    [],
+  );
+
+  const datedComplete = slices.every((_, index) => feeds[index]?.ready && !feeds[index]?.hasNextPage);
 
   const { videos, frontier, complete, ready, failed, fetching } = useMemo(() => {
     const states = slices.map((_, index) => feeds[index]);
-    const merged = mergeTimeline(states.map((state) => state && { rows: state.rows, hasNextPage: state.hasNextPage }));
+    const dated = mergeTimeline(
+      states.map((state) => state && { rows: state.rows, hasNextPage: state.hasNextPage }),
+      order,
+    );
+    const unknownStates = datedComplete ? slices.map((_, index) => unknownFeeds[index]) : [];
+    const unknown = mergeTimeline(
+      unknownStates.map((state) => state && { rows: state.rows, hasNextPage: state.hasNextPage }),
+      order,
+    );
+    const unknownReady = datedComplete && unknownStates.every((state) => state?.ready);
+    const activeStates = datedComplete ? unknownStates : states;
+    const active = datedComplete ? unknown : dated;
     return {
-      videos: merged.rows.map((row) => videoRecordToResult({ ...row, expand: { channel: channels.get(row.channel) } })),
-      frontier: states[merged.pending],
-      complete: merged.pending < 0,
-      ready: states.every((state) => state?.ready),
-      failed: states.some((state) => state?.error),
-      fetching: states.some((state) => state?.fetching),
+      videos: [...dated.rows, ...unknown.rows].map((row) => videoRecordToResult({ ...row, expand: { channel: channels.get(row.channel) } })),
+      frontier: activeStates[active.pending],
+      complete: unknownReady && unknown.pending < 0,
+      ready: states.every((state) => state?.ready) && (!datedComplete || unknownReady),
+      failed: [...states, ...unknownStates].some((state) => state?.error),
+      fetching: [...states, ...unknownStates].some((state) => state?.fetching),
     };
-  }, [feeds, slices, channels]);
+  }, [feeds, unknownFeeds, slices, channels, order, datedComplete]);
   const count = scope.length === 0 ? 0 : failed ? null : ready && complete ? videos.length : null;
 
   useEffect(() => onCountChange(count), [count, onCountChange]);
@@ -145,9 +175,26 @@ export function SubscriptionVideoPages({
       term={query}
       matchingChannelIds={matching}
       hideSubscriberOnly={hideSubscriberOnly}
+      order={order}
+      unknown={false}
       report={report}
     />
   ));
+  const unknownFeedsOfSlices = datedComplete
+    ? slices.map((slice, index) => (
+        <ChannelFeed
+          key={`unknown:${slice.join(',')}:${retry}`}
+          index={index}
+          channelIds={slice}
+          term={query}
+          matchingChannelIds={matching}
+          hideSubscriberOnly={hideSubscriberOnly}
+          order={order}
+          unknown
+          report={reportUnknown}
+        />
+      ))
+    : null;
   const loading = !ready || fetching;
   const settled = ready && !fetching && !refreshing && !failed;
   // A stream already stored as a video is shown once, as its live card.
@@ -156,6 +203,7 @@ export function SubscriptionVideoPages({
   return (
     <div hidden={!visible} className="space-y-4">
       {feedsOfSlices}
+      {unknownFeedsOfSlices}
       {shown.length > 0 && (
         <VideoGrid
           videos={shown}
@@ -177,6 +225,7 @@ export function SubscriptionVideoPages({
           action={t('common.retry')}
           onAction={() => {
             setFeeds({});
+            setUnknownFeeds({});
             setRetry((value) => value + 1);
           }}
         />
