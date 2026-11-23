@@ -165,6 +165,66 @@ func TestStaleTokenRefreshesRefusedCurrentRoot(t *testing.T) {
 	}
 }
 
+func TestStaleTokenRefreshesRefusedIntermediatePlaylist(t *testing.T) {
+	for _, denial := range []int{http.StatusForbidden, http.StatusGone} {
+		for _, refuseFresh := range []bool{false, true} {
+			t.Run(fmt.Sprintf("status=%d/refuseFresh=%t", denial, refuseFresh), func(t *testing.T) {
+				var generation atomic.Int32
+				generation.Store(1)
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					sig := r.URL.Query().Get("sig")
+					if r.URL.Path == "/master.m3u8" {
+						w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+						fmt.Fprintf(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nmedia.m3u8?sig=%s\n", sig)
+						return
+					}
+					if sig != fmt.Sprint(generation.Load()) || (refuseFresh && sig == "3" && r.URL.Path == "/media.m3u8") {
+						w.WriteHeader(denial)
+						return
+					}
+					if r.URL.Path == "/media.m3u8" {
+						w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+						fmt.Fprintf(w, "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2,\none.ts?sig=%s\n#EXTINF:2,\ntwo.ts?sig=%s\n", sig, sig)
+						return
+					}
+					fmt.Fprintf(w, "%s-%s", sig, r.URL.Path)
+				}))
+				defer upstream.Close()
+				plat := &fakePlatform{id: defaultID, manifest: func(context.Context, string, string) (platform.Manifest, error) {
+					return platform.Manifest{URL: fmt.Sprintf("%s/master.m3u8?sig=%d", upstream.URL, generation.Load())}, nil
+				}}
+				handler := api(newProxy(t, []*fakePlatform{plat}, nil))
+				master := get(t, handler, "/api/stream/record1")
+				playlists := resources(master.Body.String())
+				if master.Code != http.StatusOK || len(playlists) != 1 {
+					t.Fatalf("master: %d %s", master.Code, master.Body)
+				}
+				leaf := get(t, handler, playlists[0])
+				segments := resources(leaf.Body.String())
+				if leaf.Code != http.StatusOK || len(segments) != 2 {
+					t.Fatalf("leaf: %d %s", leaf.Code, leaf.Body)
+				}
+				generation.Store(2)
+				if response := get(t, handler, segments[0]); response.Code != http.StatusOK || response.Body.String() != "2-/one.ts" {
+					t.Fatalf("G2: %d %s", response.Code, response.Body)
+				}
+				generation.Store(3)
+				response := get(t, handler, segments[1])
+				if refuseFresh {
+					if response.Code != http.StatusBadGateway {
+						t.Fatalf("refused G3: %d %s", response.Code, response.Body)
+					}
+				} else if response.Code != http.StatusOK || response.Body.String() != "3-/two.ts" {
+					t.Fatalf("G3: %d %s", response.Code, response.Body)
+				}
+				if plat.calls.Load() != 3 {
+					t.Fatalf("lookups: %d", plat.calls.Load())
+				}
+			})
+		}
+	}
+}
+
 func TestLateRecoveryCannotPublishOlderGeneration(t *testing.T) {
 	var generation atomic.Int32
 	generation.Store(1)
@@ -191,6 +251,9 @@ func TestLateRecoveryCannotPublishOlderGeneration(t *testing.T) {
 		fmt.Fprint(w, sig)
 	}))
 	defer upstream.Close()
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
 	plat := &fakePlatform{id: defaultID, manifest: func(context.Context, string, string) (platform.Manifest, error) {
 		return platform.Manifest{URL: fmt.Sprintf("%s/master.m3u8?sig=%d", upstream.URL, generation.Load())}, nil
 	}}
@@ -211,7 +274,7 @@ func TestLateRecoveryCannotPublishOlderGeneration(t *testing.T) {
 	if response := get(t, handler, paths[0]); response.Code != http.StatusOK || response.Body.String() != "3" {
 		t.Fatalf("G3: %d %s", response.Code, response.Body)
 	}
-	close(release)
+	unblock()
 	response := <-late
 	if response.Code != http.StatusOK || response.Body.String() != "3" {
 		t.Fatalf("late: %d %s", response.Code, response.Body)
