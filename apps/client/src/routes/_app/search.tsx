@@ -238,7 +238,7 @@ function SearchResults({ query, source, searchPlatform, reuse }: { query: string
       {loading && (
         <div aria-live="polite" aria-busy="true">
           <span className="sr-only">{t(results.length === 0 ? 'search.loading' : 'search.moreLoading')}</span>
-          <VideoGridSkeleton />
+          <VideoGridSkeleton fillViewport={combinedResults.length === 0} />
         </div>
       )}
       {error && <ErrorSnackbar message={t(error)} action={t('search.retry')} onAction={retry} />}

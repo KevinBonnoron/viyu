@@ -118,7 +118,7 @@ export function VideoGrid({
       {!isReady && !isError && (
         <div aria-live="polite" aria-busy="true">
           <span className="sr-only">{t('search.moreLoading')}</span>
-          <VideoGridSkeleton />
+          <VideoGridSkeleton fillViewport={ordered.length === 0} />
         </div>
       )}
       {isError && (
