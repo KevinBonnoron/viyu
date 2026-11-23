@@ -97,7 +97,7 @@ export function VideoInformation({
   const audience = video.live ? (viewers ?? video.viewCount) : video.viewCount;
   const audienceKey = video.live ? 'video.watching' : 'video.views';
   return (
-    <header className="space-y-3">
+    <header className="@container/information space-y-3">
       {showCreators && (
         <div className="flex flex-wrap items-center gap-2">
           {creators.map((creator) => {
@@ -126,22 +126,22 @@ export function VideoInformation({
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-4 gap-y-3 @3xl/information:w-auto @3xl/information:flex-1">
           {video.channelId ? (
             <ChannelLink
               channel={{ id: video.channelId, platform: video.platform, source: video.source }}
-              className="flex min-w-0 items-center gap-3 rounded-full hover:text-primary"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-full hover:text-primary @3xl/information:flex-none"
             >
               {owner}
             </ChannelLink>
           ) : (
-            <div className="flex min-w-0 items-center gap-3">{owner}</div>
+            <div className="flex min-w-0 flex-1 items-center gap-3 @3xl/information:flex-none">{owner}</div>
           )}
           {video.channelId && (
             <Button
               variant={subscribed ? 'secondary' : 'default'}
               size="sm"
-              className="rounded-full"
+              className="ml-auto shrink-0 rounded-full @3xl/information:ml-0"
               disabled={subscriptionDisabled}
               aria-pressed={subscribed}
               onClick={onSubscribe}
@@ -150,7 +150,7 @@ export function VideoInformation({
               {t(subscribed ? 'player.subscribed' : 'player.subscribe')}
             </Button>
           )}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground @3xl/information:w-auto">
             {audience > 0 && (
               <span title={t(audienceKey, { count: audience.toLocaleString(language) })}>
                 {t(audienceKey, { count: formatCompactNumber(audience, language) })}
@@ -165,7 +165,7 @@ export function VideoInformation({
             {video.category && <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{video.category}</span>}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full shrink-0 items-center justify-between gap-2 @3xl/information:w-auto @3xl/information:justify-start">
           <Button variant="outline" size="sm" className="rounded-full" onClick={onShare}>
             <Share2 aria-hidden="true" className="size-4" />
             {t('player.share')}
