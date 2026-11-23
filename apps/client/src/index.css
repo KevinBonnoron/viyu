@@ -6,9 +6,6 @@
   @media (width >= 768px) and (hover: hover) and (pointer: fine)
 );
 
-/* The player's side panel sits beside the video or below it. The choice is measured on the player itself
-   (useSidePanelPlacement sets data-player-layout on its root), not taken from the viewport, so browser chrome, a sidebar or a
-   zoom level do not change it. */
 @custom-variant beside (
   &:where([data-player-layout="beside"], [data-player-layout="beside"] *)
 );
