@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ChannelFilters } from '@/components/channel-filters';
+import { type ChronologicalOrder, ChronologicalOrderSelect } from '@/components/chronological-order-select';
 import { ContinueWatching } from '@/components/continue-watching';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorSnackbar } from '@/components/error-snackbar';
@@ -58,6 +59,7 @@ function ProfileSubscriptions({ series }: { series: boolean }) {
   const [selected, setSelected] = useState<string>();
   const [groupWithOpen, setGroupWithOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [order, setOrder] = useState<ChronologicalOrder>('desc');
   const query = foldSearch(search.trim());
   const [videoCount, setVideoCount] = useState<number | null>(null);
   const [seriesCount, setSeriesCount] = useState<number | null>(null);
@@ -242,21 +244,31 @@ function ProfileSubscriptions({ series }: { series: boolean }) {
               )}
             </Link>
           </nav>
-          <Input
-            type="search"
-            aria-label={t('subscriptions.search')}
-            placeholder={t('subscriptions.search')}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="mb-1 w-full sm:w-72"
-          />
+          <div className="mb-1 flex w-full min-w-0 items-center gap-2 sm:max-w-md">
+            <Input
+              type="search"
+              aria-label={t('subscriptions.search')}
+              placeholder={t('subscriptions.search')}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="min-w-0 flex-1"
+            />
+            <ChronologicalOrderSelect value={order} onChange={setOrder} />
+          </div>
         </div>
       </div>
       <div hidden={series} className="space-y-6">
-        <LocalSubscriptions selectedChannels={selectedChannels} live={live} onCountChange={setVideoCount} active={!series} query={search.trim()} />
+        <LocalSubscriptions
+          selectedChannels={selectedChannels}
+          live={live}
+          onCountChange={setVideoCount}
+          active={!series}
+          query={search.trim()}
+          order={order}
+        />
       </div>
       <div hidden={!series}>
-        <SeriesPage selectedChannels={selectedChannels} onCountChange={setSeriesCount} query={query} />
+        <SeriesPage selectedChannels={selectedChannels} onCountChange={setSeriesCount} query={query} order={order} />
       </div>
     </div>
   );
@@ -267,12 +279,14 @@ function LocalSubscriptions({
   onCountChange,
   active,
   query,
+  order,
 }: {
   selectedChannels?: ChannelResult[];
   live: SubscriptionLive[];
   onCountChange: (count: number | null) => void;
   active: boolean;
   query: string;
+  order: ChronologicalOrder;
 }) {
   const { t } = useI18n();
   const { activeProfile } = useProfiles();
@@ -441,7 +455,8 @@ function LocalSubscriptions({
         </div>
       )}
       <SubscriptionVideoPages
-        key={`${profileId}|${channelIds.join(',')}|${searched}|${hideSubscriberOnly}`}
+        key={`${profileId}|${channelIds.join(',')}|${searched}|${hideSubscriberOnly}|${order}`}
+        order={order}
         hideSubscriberOnly={hideSubscriberOnly}
         channelIds={channelIds}
         channels={channels}

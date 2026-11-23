@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ListVideo } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
+import type { ChronologicalOrder } from '@/components/chronological-order-select';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorSnackbar } from '@/components/error-snackbar';
 import { Button } from '@/components/ui/button';
@@ -19,10 +20,12 @@ export function SeriesPage({
   selectedChannels,
   onCountChange,
   query,
+  order,
 }: {
   selectedChannels?: ChannelResult[];
   onCountChange: (count: number | null) => void;
   query: string;
+  order: ChronologicalOrder;
 }) {
   const { activeProfile, isError, retry } = useProfiles();
   const { t } = useI18n();
@@ -36,7 +39,16 @@ export function SeriesPage({
   if (!activeProfile) {
     return <SeriesGridSkeleton />;
   }
-  return <ProfileSeries key={activeProfile.id} profileId={activeProfile.id} selectedChannels={selectedChannels} onCountChange={onCountChange} query={query} />;
+  return (
+    <ProfileSeries
+      key={activeProfile.id}
+      profileId={activeProfile.id}
+      selectedChannels={selectedChannels}
+      onCountChange={onCountChange}
+      query={query}
+      order={order}
+    />
+  );
 }
 
 function ProfileSeries({
@@ -44,11 +56,13 @@ function ProfileSeries({
   selectedChannels,
   onCountChange,
   query,
+  order,
 }: {
   profileId: string;
   selectedChannels?: ChannelResult[];
   onCountChange: (count: number | null) => void;
   query: string;
+  order: ChronologicalOrder;
 }) {
   const { t, language } = useI18n();
   const { isEnabled } = useSources();
@@ -59,11 +73,25 @@ function ProfileSeries({
     [result, isEnabled],
   );
   const visibleSeries =
-    enabledSeries?.filter(
-      (series) =>
-        (!selectedChannels || selectedChannels.some((channel) => series.platform === channel.platform && series.channelRecordId === channel.id)) &&
-        (!query || foldSearch(series.title).includes(query) || foldSearch(series.channelName).includes(query)),
-    ) ?? [];
+    enabledSeries
+      ?.filter(
+        (series) =>
+          (!selectedChannels || selectedChannels.some((channel) => series.platform === channel.platform && series.channelRecordId === channel.id)) &&
+          (!query || foldSearch(series.title).includes(query) || foldSearch(series.channelName).includes(query)),
+      )
+      .sort((a, b) => {
+        const aDate = Date.parse(a.latestPublishedAt);
+        const bDate = Date.parse(b.latestPublishedAt);
+        const aValid = Number.isFinite(aDate);
+        const bValid = Number.isFinite(bDate);
+        if (aValid !== bValid) {
+          return aValid ? -1 : 1;
+        }
+        if (aValid && bValid && aDate !== bDate) {
+          return order === 'asc' ? aDate - bDate : bDate - aDate;
+        }
+        return a.title.localeCompare(b.title, language, { sensitivity: 'base', numeric: true }) || a.id.localeCompare(b.id);
+      }) ?? [];
   useEffect(() => {
     onCountChange(result && !error ? visibleSeries.length : null);
   }, [result, error, visibleSeries.length, onCountChange]);

@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { ListVideo, UserCheck, UserPlus } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { ChannelAvatar } from '@/components/channel-avatar';
+import { type ChronologicalOrder, ChronologicalOrderSelect } from '@/components/chronological-order-select';
 import { PageTitle } from '@/components/page-title';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,24 +78,25 @@ function Channel({
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
   const [seriesSearch, setSeriesSearch] = useState('');
+  const [order, setOrder] = useState<ChronologicalOrder>('desc');
   const query = useDebouncedValue(search.trim(), 300);
-  const [requested, setRequested] = useState<{ query: string; page: number }>({ query: '', page: 1 });
-  const [resultKey, setResultKey] = useState<{ query: string } | null>(null);
+  const [requested, setRequested] = useState<{ query: string; order: ChronologicalOrder; page: number }>({ query: '', order: 'desc', page: 1 });
+  const [resultKey, setResultKey] = useState<{ query: string; order: ChronologicalOrder } | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const loaded = useRef<{ query: string; page: number; videos: VideoResult[] } | null>(null);
+  const loaded = useRef<{ query: string; order: ChronologicalOrder; page: number; videos: VideoResult[] } | null>(null);
   const lastRetry = useRef(0);
-  const page = requested.query === query ? requested.page : 1;
+  const page = requested.query === query && requested.order === order ? requested.page : 1;
   const syncing = sync?.status === 'pending' || sync?.status === 'running';
   const channelSeries = useChannelSeries(channelId, platform === 'youtube', syncing);
   const subscription = useChannelSubscription(channel ? { id: channelId, platform: channel.platform, name: channel.name, thumbnail: channel.thumbnail } : null);
   const live = useChannelLive(channelId);
   const target = { id: channelId, platform, source };
 
-  const videoResultReady = resultKey?.query === query;
+  const videoResultReady = resultKey?.query === query && resultKey.order === order;
   useAbortableEffect(
     async (signal) => {
-      if (requested.query !== query) {
-        setRequested({ query, page: 1 });
+      if (requested.query !== query || requested.order !== order) {
+        setRequested({ query, order, page: 1 });
       }
       setLoading(true);
       setError(null);
@@ -104,7 +106,7 @@ function Channel({
       while (crawling && !signal.aborted) {
         try {
           const previous = loaded.current;
-          const append = firstPass && previous?.query === query && previous.page < page;
+          const append = firstPass && previous?.query === query && previous.order === order && previous.page < page;
           const catalog = new Map<string, VideoResult>(append ? previous.videos.map((video) => [`${video.platform}:${video.id}`, video]) : []);
           const pages = [];
           for (let current = append ? previous.page + 1 : 1; current <= page; current++) {
@@ -116,6 +118,7 @@ function Channel({
               page: current,
               limit: 30,
               q: query,
+              order,
             });
             for (const video of result.videos) {
               catalog.set(`${video.platform}:${video.id}`, video);
@@ -132,9 +135,9 @@ function Channel({
           lastRetry.current = retry;
           setChannel((current) => data.channel ?? current);
           const nextVideos = Array.from(catalog.values());
-          loaded.current = { query, page: data.page, videos: nextVideos };
+          loaded.current = { query, order, page: data.page, videos: nextVideos };
           setVideos(nextVideos);
-          setResultKey({ query });
+          setResultKey({ query, order });
           setHasMore(data.hasMore);
           setHasResult(true);
           setSync(data.sync ?? null);
@@ -156,7 +159,7 @@ function Channel({
         }
       }
     },
-    [channelId, source, platform, retry, query, page],
+    [channelId, source, platform, retry, query, order, page],
   );
 
   // A video flagged live is only that while the live lookup says so: a stream that ended keeps its flag until the server notices.
@@ -306,6 +309,7 @@ function Channel({
                   onChange={(event) => (series ? setSeriesSearch(event.target.value) : setSearch(event.target.value))}
                   className="min-w-0 flex-1 sm:w-72 sm:flex-none"
                 />
+                <ChronologicalOrderSelect value={order} onChange={setOrder} />
               </div>
             </div>
             <div hidden={series}>
@@ -314,7 +318,7 @@ function Channel({
                   videos={channelVideos}
                   sortByPublication={false}
                   historyActions
-                  onEndReached={!series && hasMore && !loading && !error ? () => setRequested({ query, page: page + 1 }) : undefined}
+                  onEndReached={!series && hasMore && !loading && !error ? () => setRequested({ query, order, page: page + 1 }) : undefined}
                 />
               ) : (!videoResultReady || syncing || loading) && !error ? (
                 <VideoGridSkeleton />
@@ -334,6 +338,7 @@ function Channel({
                   retry={channelSeries.retry}
                   sync={sync}
                   query={seriesSearch}
+                  order={order}
                 />
               </div>
             )}
@@ -408,6 +413,7 @@ export function ChannelSkeleton() {
           </div>
           <div className="mb-1 flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Skeleton className="h-10 min-w-0 flex-1 rounded-lg sm:w-72 sm:flex-none" />
+            <Skeleton className="h-10 w-40 rounded-lg" />
           </div>
         </div>
         <VideoGridSkeleton />
@@ -448,6 +454,7 @@ function ChannelSeries({
   retry,
   sync,
   query,
+  order,
 }: {
   series: SeriesSummary[];
   seriesSync: SeriesSync | null;
@@ -455,6 +462,7 @@ function ChannelSeries({
   retry: () => void;
   sync: ChannelSync | null;
   query: string;
+  order: ChronologicalOrder;
 }) {
   const { t, language } = useI18n();
   if (error) {
@@ -466,7 +474,22 @@ function ChannelSeries({
   }
   const synchronizing = sync?.status === 'pending' || sync?.status === 'running' || seriesSync?.status === 'pending' || seriesSync?.status === 'running';
   const needle = foldSearch(query.trim());
-  const visibleSeries = needle ? channelSeries.filter((series) => foldSearch(series.title).includes(needle)) : channelSeries;
+  const visibleSeries = (needle ? channelSeries.filter((series) => foldSearch(series.title).includes(needle)) : [...channelSeries]).sort((a, b) => {
+    if (!a.latestPublishedAt || !b.latestPublishedAt) {
+      if (a.latestPublishedAt) {
+        return -1;
+      }
+      if (b.latestPublishedAt) {
+        return 1;
+      }
+    } else {
+      const dates = a.latestPublishedAt.localeCompare(b.latestPublishedAt);
+      if (dates) {
+        return order === 'asc' ? dates : -dates;
+      }
+    }
+    return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+  });
   return (
     <div className="space-y-4">
       {synchronizing && <p className="text-sm text-muted-foreground">{t('series.syncing', { count: sync?.loaded ?? 0 })}</p>}
