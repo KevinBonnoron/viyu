@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { ListVideo, UserCheck, UserPlus } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChannelAvatar } from '@/components/channel-avatar';
 import { type ChronologicalOrder, ChronologicalOrderSelect } from '@/components/chronological-order-select';
 import { PageTitle } from '@/components/page-title';
@@ -85,6 +85,7 @@ function Channel({
   const [resultKey, setResultKey] = useState<{ query: string; order: ChronologicalOrder } | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const loaded = useRef<{ query: string; order: ChronologicalOrder; page: number; videos: VideoResult[]; revision?: string; unsettled: boolean } | null>(null);
+  const emptyPaginationRef = useRef<HTMLDivElement>(null);
   const lastRetry = useRef(0);
   const page = requested.query === query && requested.order === order ? requested.page : 1;
   const syncing = sync?.status === 'pending' || sync?.status === 'running';
@@ -143,17 +144,18 @@ function Channel({
             setHasResult(true);
             setSync(data.sync ?? null);
             crawling = polling.crawling;
+            setLoading(false);
           }
         } catch (failure: unknown) {
           crawling = false;
           if (!signal.aborted) {
             setError(requestError(failure));
+            setLoading(false);
           }
         }
         if (signal.aborted) {
           return;
         }
-        setLoading(false);
         retrySync = false;
         firstPass = false;
         if (crawling) {
@@ -176,6 +178,24 @@ function Channel({
         ),
     [videos, sources, live?.recordId],
   );
+  const emptyPagination =
+    videoResultReady && requested.query === query && requested.order === order && channelVideos.length === 0 && !series && hasMore && !loading && !error;
+  useEffect(() => {
+    if (!emptyPagination || !emptyPaginationRef.current) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          setRequested((current) => (current.query === query && current.order === order && current.page === page ? { query, order, page: page + 1 } : current));
+        }
+      },
+      { rootMargin: '300px' },
+    );
+    observer.observe(emptyPaginationRef.current);
+    return () => observer.disconnect();
+  }, [emptyPagination, query, order, page]);
   // An unresolved YouTube channel is named after its own ID. A Twitch channel's name is routinely its login, so equality says nothing there.
   const named = !!channel?.name && !(channel.platform === 'youtube' && channel.name === nativeId);
   const waitingForChannel = !error && (loading || syncing) && !named;
@@ -322,8 +342,10 @@ function Channel({
                   historyActions
                   onEndReached={!series && hasMore && !loading && !error ? () => setRequested({ query, order, page: page + 1 }) : undefined}
                 />
+              ) : emptyPagination ? (
+                <div ref={emptyPaginationRef} aria-hidden="true" className="h-px" />
               ) : (!videoResultReady || syncing || loading) && !error ? (
-                <VideoGridSkeleton />
+                <VideoGridSkeleton fillViewport={!videoResultReady} />
               ) : !error && query ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">{t('subscriptions.noSearchResults')}</p>
               ) : !error && sync?.status !== 'error' ? (
