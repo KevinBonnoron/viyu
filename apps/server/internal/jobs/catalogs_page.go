@@ -2,6 +2,11 @@ package jobs
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"hash"
+	"io"
 	"slices"
 	"strings"
 	"unicode"
@@ -17,10 +22,53 @@ import (
 
 type CatalogPage struct {
 	Catalog
-	Page    int  `json:"page"`
-	Limit   int  `json:"limit"`
-	HasMore bool `json:"hasMore"`
-	Total   int  `json:"total"`
+	Page     int    `json:"page"`
+	Limit    int    `json:"limit"`
+	HasMore  bool   `json:"hasMore"`
+	Total    int    `json:"total"`
+	Revision string `json:"revision"`
+}
+
+func revisionFields(h hash.Hash, fields ...string) {
+	var length [8]byte
+	for _, field := range fields {
+		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+		_, _ = h.Write(length[:])
+		_, _ = io.WriteString(h, field)
+	}
+}
+
+func revisionHash(key CatalogKey) hash.Hash {
+	h := sha256.New()
+	revisionFields(h, key.Platform, key.ChannelID, key.UserID, key.Revision)
+	return h
+}
+
+func revisionString(h hash.Hash) string {
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (c *Catalogs) publicRevision(key CatalogKey, catalogID string) (string, error) {
+	h := revisionHash(key)
+	rows, err := c.app.DB().NewQuery(`SELECT v.id, COALESCE(v.published, '') AS published, COALESCE(v.titles, '') AS titles
+		FROM channel_catalog_entries e JOIN videos v ON v.id = e.video
+		WHERE e.catalog = {:id} AND json_array_length(COALESCE(NULLIF(v.owners, ''), '[]')) = 0
+		ORDER BY v.id`).Bind(dbx.Params{"id": catalogID}).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, published, titles string
+		if err := rows.Scan(&id, &published, &titles); err != nil {
+			return "", err
+		}
+		revisionFields(h, id, published, titles)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return revisionString(h), nil
 }
 
 func foldTitle(s string) string {
@@ -95,9 +143,14 @@ func (c *Catalogs) Snapshot(key CatalogKey, opts SnapshotOptions) (CatalogPage, 
 		if err != nil {
 			return CatalogPage{}, err
 		}
+		h := revisionHash(key)
+		for _, video := range all.Videos {
+			revisionFields(h, video.RecordID, video.ID, video.Published, video.Title, video.OriginalTitle)
+		}
+		revision := revisionString(h)
 		videos, total := PageVideos(all.Videos, page, limit, query, opts.Ascending)
 		all.Videos = videos
-		return CatalogPage{Catalog: all, Page: page, Limit: limit, Total: total, HasMore: page <= total/limit && page*limit < total}, nil
+		return CatalogPage{Catalog: all, Page: page, Limit: limit, Total: total, HasMore: page <= total/limit && page*limit < total, Revision: revision}, nil
 	}
 	admitted := c.ensurePublic(key, opts.Retry)
 	row, err := c.row(c.app, key)
@@ -109,7 +162,12 @@ func (c *Catalogs) Snapshot(key CatalogKey, opts SnapshotOptions) (CatalogPage, 
 		out.Sync.Status = Failed
 	}
 	if row == nil {
+		out.Revision = revisionString(revisionHash(key))
 		return out, nil
+	}
+	out.Revision, err = c.publicRevision(key, row.Id)
+	if err != nil {
+		return CatalogPage{}, apierr.Internal("Failed to get channel data", err)
 	}
 	var count int
 	err = c.app.DB().NewQuery(`SELECT COUNT(*) FROM channel_catalog_entries e JOIN videos v ON v.id = e.video WHERE e.catalog = {:id} AND json_array_length(COALESCE(NULLIF(v.owners, ''), '[]')) = 0`).Bind(dbx.Params{"id": row.Id}).Row(&count)
@@ -168,6 +226,13 @@ func (c *Catalogs) Snapshot(key CatalogKey, opts SnapshotOptions) (CatalogPage, 
 			}
 		}
 		out.Videos = c.store.VideosOf(records)
+	}
+	revision, err := c.publicRevision(key, row.Id)
+	if err != nil {
+		return CatalogPage{}, apierr.Internal("Failed to get channel data", err)
+	}
+	if revision != out.Revision {
+		out.Revision = ""
 	}
 	out.HasMore = page <= out.Total/limit && page*limit < out.Total
 	return out, nil

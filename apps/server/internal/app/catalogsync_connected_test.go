@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KevinBonnoron/viyu/apps/server/internal/catalog"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/jobs"
 )
 
@@ -146,7 +147,7 @@ func TestConnectedChannelCatalogPaging(t *testing.T) {
 	owner := testUser(t, app, "paging-connected@example.test")
 	token := tokenOf(t, owner)
 	channelID := storedChannel(t, app, yt, serChannel("catalog"), "Catalog channel")
-	path := "/api/channel/" + channelID + "?sync=1&source=" + yt
+	path := "/api/channel/" + channelID + "?source=" + yt
 	csyncConnect(t, handler, token, "paging-secret")
 	csyncWait(t, handler, path, token, func(a jobs.Catalog) bool { return a.Sync.Status == jobs.Complete })
 	readPage := func(suffix string) jobs.CatalogPage {
@@ -161,6 +162,16 @@ func TestConnectedChannelCatalogPaging(t *testing.T) {
 	if len(first.Videos) != 30 || len(second.Videos) != 30 || first.Sync.Loaded != 65 || second.Total != 65 || !first.HasMore {
 		t.Fatalf("connected pages: %+v %+v", first, second)
 	}
+	if first.Revision == "" || first.Revision != second.Revision {
+		t.Fatalf("connected revision not stable across pages: %q %q", first.Revision, second.Revision)
+	}
+	private, err := app.FindRecordById("videos", second.Videos[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.VisibleTo(private, owner.Id) || catalog.VisibleTo(private, "") {
+		t.Fatalf("connected second-page video lost private ownership: %v", private.GetStringSlice("owners"))
+	}
 	seen := map[string]bool{}
 	for _, page := range []jobs.CatalogPage{first, second} {
 		for _, video := range page.Videos {
@@ -173,5 +184,21 @@ func TestConnectedChannelCatalogPaging(t *testing.T) {
 	search := readPage("&q=listing%20title%2065")
 	if search.Total != 1 || search.Sync.Loaded != 65 || len(search.Videos) != 1 {
 		t.Fatalf("connected search: %+v", search)
+	}
+	other := testUser(t, app, "paging-other@example.test")
+	otherToken := tokenOf(t, other)
+	acctExpect(t, request(t, handler, path+"&page=2", otherToken), http.StatusConflict, "SOURCE_NOT_CONNECTED")
+	csyncConnect(t, handler, otherToken, "other-paging-secret")
+	res := request(t, handler, path, otherToken)
+	acctExpect(t, res, http.StatusOK, "")
+	var otherPage jobs.CatalogPage
+	acctDecode(t, res, &otherPage)
+	if otherPage.Revision == "" || otherPage.Revision == first.Revision {
+		t.Fatalf("another account reused the connected revision: %q", otherPage.Revision)
+	}
+	csyncConnect(t, handler, token, "paging-reconnected")
+	reconnected := readPage("")
+	if reconnected.Revision == "" || reconnected.Revision == first.Revision {
+		t.Fatalf("connection revision was reused: %q", reconnected.Revision)
 	}
 }

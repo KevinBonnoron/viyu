@@ -42,6 +42,7 @@ export interface ChannelPage {
   limit: number;
   hasMore: boolean;
   total: number;
+  revision?: string;
 }
 
 export interface VideoUrl {
