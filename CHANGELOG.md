@@ -8,6 +8,8 @@
 
 ### Fixed
 
+* Keep ranked API positions for home-feed videos also returned by connected sources, retaining the connected session on each card and deduplicating paginated source results.
+* Preserve eligible cached subscription videos during public-search outages, and filter hidden subscriptions before the bounded candidate limit while keeping unfiltered discovery seeds and live-history exceptions.
 * Ground discovery topics in source video titles instead of raw tag repetition, so descriptive language tags on unrelated videos do not generate language-learning recommendations; preserve genuine language-learning interests.
 * Keep video-grid skeletons until local watch history, reactions and display settings are ready; retain checked cards while subsequent pages load.
 * Wait for the subscription resume shelf before displaying the timeline, so resumable videos do not briefly appear in both lists.
