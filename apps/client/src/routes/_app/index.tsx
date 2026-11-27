@@ -15,6 +15,7 @@ import { useUserSettings } from '@/hooks/useUserSettings';
 import { useLatestLike } from '@/hooks/useVideoStatuses';
 import { api } from '@/lib/api';
 import { requestError } from '@/lib/api-error';
+import { mergeFeedVideos } from '@/lib/feed-results';
 import { isSourceActive } from '@/lib/source-activation';
 import { type TranslationKey, useI18n } from '@/providers/i18n-provider';
 import { useProfiles } from '@/providers/profiles-provider';
@@ -150,25 +151,8 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
     [profileId, likesReady, subscriptionsReady, hasActivity, activityKey, retry, settings?.hide_watched, settings?.hide_subscriber_only],
   );
 
-  const merged = new Map<string, VideoResult>();
-  for (const feed of remoteFeeds) {
-    for (const video of feed.videos) {
-      const key = `${video.platform}:${video.id}`;
-      if (!merged.has(key)) {
-        merged.set(key, video);
-      }
-    }
-  }
-  if (hasActivity) {
-    for (const video of videos) {
-      const key = `${video.platform}:${video.id}`;
-      if (!merged.has(key)) {
-        merged.set(key, video);
-      }
-    }
-  }
   const resume = useContinueWatching();
-  const combined = [...merged.values()];
+  const combined = mergeFeedVideos(hasActivity ? videos : [], remoteFeeds);
   const rest = combined.filter((video) => !resume.ids.has(video.id));
   const feedPending = loading || (!likesReady && !likesError) || (!subscriptionsReady && !subscriptionsError) || remoteFeeds.some((feed) => feed.loading);
   const pending = feedPending || (!resume.isReady && !resume.isError);
