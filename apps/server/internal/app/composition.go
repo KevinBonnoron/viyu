@@ -119,6 +119,8 @@ func (c *composition) start(se *core.ServeEvent, opts Options) error {
 	liveService := live.New(live.Options{App: app, Platforms: platforms, Store: store, Spawn: group.Go, Log: log})
 
 	subscriptionsService := subscriptions.New(app, store, accountSources, platforms)
+	searchService := search.New(platforms, store, log)
+	discovery := feed.NewDiscovery(searchService, group.Go)
 	httpapi.New(httpapi.Deps{
 		App:           app,
 		Group:         group,
@@ -129,11 +131,11 @@ func (c *composition) start(se *core.ServeEvent, opts Options) error {
 		Chat:          chat.New(chatOptions),
 		Comments:      commentsService,
 		Live:          liveService,
-		Search:        search.New(platforms, store, log),
+		Search:        searchService,
 		Accounts:      accounts.New(app, store, accountSources, platforms),
 		Subscriptions: subscriptionsService,
 		Companion:     companion.New(app, store, subscriptionsService, accountSources),
-		Feed:          feed.New(app, store, accountSources, refresher, seriesStore),
+		Feed:          feed.New(app, store, accountSources, refresher, seriesStore, discovery),
 		Stats:         stats.New(app, store, accountSources),
 		Refresher:     refresher,
 		Catalogs:      catalogs,
@@ -148,7 +150,7 @@ func (c *composition) start(se *core.ServeEvent, opts Options) error {
 	}
 	group.Go(analysis.Run)
 	group.Go(func(ctx context.Context) {
-		janitor(ctx, janitorEvery, mediaProxy.Purge, commentsService.Purge, liveService.Purge)
+		janitor(ctx, janitorEvery, mediaProxy.Purge, commentsService.Purge, liveService.Purge, discovery.Purge)
 	})
 	c.current.Store(&running{group: group, analysis: analysis, platforms: platforms})
 	return nil

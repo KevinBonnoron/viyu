@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,12 +23,12 @@ func contentFreshChannel(t *testing.T, app core.App, nativeID, name string) {
 }
 
 // A platform with a catalog sync has the series analysis woken by every subscription, and the analysis
-// synchronizes the channel's catalog, which stores its videos on its own. This test is about the feed, which
-// reads what is stored, and about the refresh that fills it: the analysis is held back (as libApp does), so
-// that the refresh is the only thing that can store the channel's videos, however slow the machine is.
+// synchronizes the channel's catalog. Hold analysis back so only the listing refresh fills the subscription;
+// public discovery answers with no extra videos in this fixture.
 func TestFeedAnswersFromTheStoreAndTheRefreshFillsIt(t *testing.T) {
 	t.Parallel()
-	option, _ := contentDownloader(t, contentTwitchDownloader)
+	option, _ := contentDownloader(t, `case "$*" in *ytsearch*|*search_query*) exit 0 ;; esac
+`+contentTwitchDownloader)
 	quiet := func(o *Options) { o.Jobs.Analysis.Debounce = time.Hour }
 	app, handler := newApp(t, quiet, option)
 	user, token := viewerOf(t, handler)
@@ -66,36 +65,6 @@ func TestFeedAnswersFromTheStoreAndTheRefreshFillsIt(t *testing.T) {
 	}
 	if recommended := contentDecode[[]platform.Video](t, request(t, handler, "/api/recommendations?profile="+profile.Id+"&video="+videoID, token)); len(recommended) != 0 {
 		t.Fatalf("the only video is the one being watched: %+v", recommended)
-	}
-}
-
-func TestFeedShowsTheNewestVideosFirstWhateverTheRecommendationScore(t *testing.T) {
-	t.Parallel()
-	option, _ := contentDownloader(t, "exit 1")
-	app, handler := newApp(t, option)
-	user, token := viewerOf(t, handler)
-	profile := profileOf(t, app, user)
-	// The old video shares fifty tags with what the profile liked: it scores highest, but is shown by date.
-	oldID := storedVideo(t, app, platform.Video{ID: "oldvideo001", ChannelID: "UCold", ChannelName: "Old", Title: "old", Published: "2025-01-01", Tags: strings.Fields(strings.Repeat("fav ", 50))})
-	newID := storedVideo(t, app, platform.Video{ID: "newvideo001", ChannelID: "UCnew", ChannelName: "New", Title: "new", Published: "2026-10-30"})
-	unknownID := storedVideo(t, app, platform.Video{ID: "unknown0001", ChannelID: "UCunknown", ChannelName: "Unknown", Title: "unknown"})
-	for _, channel := range []string{"UCold", "UCnew", "UCunknown"} {
-		contentFreshChannel(t, app, channel, channel)
-		contentSubscribe(t, app, profile, "youtube", channel, "")
-	}
-	reactions, err := app.FindCollectionByNameOrId("video_reactions")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reaction := core.NewRecord(reactions)
-	reaction.Load(map[string]any{"profile": profile.Id, "video": oldID, "reaction": "like"})
-	if err := app.Save(reaction); err != nil {
-		t.Fatal(err)
-	}
-
-	videos := contentDecode[[]platform.Video](t, request(t, handler, "/api/feed?profile="+profile.Id, token))
-	if len(videos) != 3 || videos[0].ID != newID || videos[1].ID != oldID || videos[2].ID != unknownID {
-		t.Fatalf("the feed is not newest first with unknown dates last: %+v", videos)
 	}
 }
 

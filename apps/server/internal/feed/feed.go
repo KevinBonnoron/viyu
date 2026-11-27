@@ -1,10 +1,6 @@
-// Package feed builds the discovery rankings of a profile: its feed (what its subscribed channels published,
-// favoring the topics it liked) and the recommendations shown next to a video.
-//
-// Both are READ-ONLY on the platforms: a request never reaches yt-dlp or a platform. Candidates come from
-// the videos the catalog already stores for the subscribed channels; a channel whose listing is stale is
-// handed to the Refresher, so the next request finds fresh rows. A feed built from an empty cache is empty,
-// not an error.
+// Package feed builds a profile's public discovery feed and contextual video recommendations.
+// The feed combines cached subscriptions with public searches seeded by likes and subscribed videos.
+// Recommendations stay cache-only; stale subscribed listings are refreshed in the background.
 //
 // Expired video rows still count as candidates. A video's expiry says when its metadata should be looked up
 // again, not that the video is gone, and a feed that went empty every 24 hours (or whenever the refresh is
@@ -55,34 +51,77 @@ type Service struct {
 	accounts    *sources.Service
 	refresher   Refresher
 	seriesStore *series.Store
+	discovery   *Discovery
 }
 
-// New returns the service. A nil refresher skips refreshes; a nil seriesStore disables series continuations.
-func New(app core.App, store *catalog.Store, accounts *sources.Service, refresher Refresher, seriesStore *series.Store) *Service {
-	return &Service{app: app, store: store, accounts: accounts, refresher: refresher, seriesStore: seriesStore}
+// New returns the service. A nil refresher skips listing refreshes; a nil seriesStore disables continuations.
+func New(app core.App, store *catalog.Store, accounts *sources.Service, refresher Refresher, seriesStore *series.Store, discovery *Discovery) *Service {
+	return &Service{app: app, store: store, accounts: accounts, refresher: refresher, seriesStore: seriesStore, discovery: discovery}
 }
 
 func failed(message string, cause error) *apierr.Error { return apierr.Internal(message, cause) }
 
-// Feed ranks the cached videos of the profile's subscribed channels: the top 50 by score (see scoreVideo),
-// presented newest first. The caller has checked that the profile belongs to the account. The platforms the
-// account turned off are left out. A cancelled ctx is reported as its own error.
+// Feed selects up to fifty relevant videos, interleaving channels rather than sorting by date.
+// Searches use public sessions, even for connected accounts. The caller has checked profile ownership.
 func (s *Service) Feed(ctx context.Context, userID, profileID string) ([]platform.Video, error) {
 	const message = "Feed generation failed"
-	frequency, err := s.likedTagFrequency(profileID)
+	liked, err := s.likedVideos(profileID)
 	if err != nil {
 		return nil, failed(message, err)
 	}
+	frequency := tagFrequency(liked)
 	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, time.Time{}, nil)
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
+	// A display preference must not erase the profile's interests: watched subscription videos can
+	// still seed new discoveries. Apply visibility to the combined candidates before ranking below.
+	queries := discoveryQueries(liked, candidates)
+	active, err := s.accounts.Activations(userID)
+	if err != nil {
+		return nil, failed(message, err)
+	}
+	hits, err := s.discovery.find(ctx, active, queries)
+	if err != nil {
+		return nil, s.gatherError(ctx, err, message)
+	}
+	bonuses := make(map[string]float64, len(hits))
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if _, seen := bonuses[hit.id]; !seen {
+			ids = append(ids, hit.id)
+		}
+		bonuses[hit.id] = max(bonuses[hit.id], hit.relevance)
+	}
+	var discovered []*core.Record
+	for chunk := range slices.Chunk(ids, queryBatch) {
+		records, err := s.app.FindRecordsByIds("videos", chunk)
+		if err != nil {
+			return nil, failed(message, err)
+		}
+		// Reload cached ids: deleted rows and videos no longer visible must not escape a search cache.
+		for _, record := range records {
+			if catalog.VisibleTo(record, userID) && active[record.GetString("platform")] {
+				discovered = append(discovered, record)
+			}
+		}
+	}
+	candidates = append(candidates, s.store.VideosOf(discovered)...)
+	candidates, err = s.visibleFeedVideos(userID, profileID, candidates)
+	if err != nil {
+		return nil, failed(message, err)
+	}
 	now := time.Now()
+	seen := make(map[string]bool, len(candidates))
 	ranked := make([]scored, 0, len(candidates))
 	for _, v := range candidates {
-		ranked = append(ranked, scored{video: v, score: scoreVideo(v, frequency, nil, now)})
+		if seen[v.RecordID] {
+			continue
+		}
+		seen[v.RecordID] = true
+		ranked = append(ranked, scored{video: v, score: scoreVideo(v, frequency, nil, now) + bonuses[v.RecordID]})
 	}
-	return top(ranked, feedLimit), nil
+	return topFeed(ranked, feedLimit), ctx.Err()
 }
 
 // Recommendations ranks cached subscription and anchor-channel videos in context. When the anchor has a
@@ -197,7 +236,16 @@ func (s *Service) anchorOf(userID, recordID string) (*anchor, error) {
 // to favor topics the profile already reacted to. The liked videos are loaded and presented in batches: a
 // bounded number of queries whatever the number of likes.
 func (s *Service) likedTagFrequency(profileID string) (map[string]int, error) {
-	reactions, err := s.app.FindRecordsByFilter("video_reactions", "profile = {:profile} && reaction = 'like'", "", 0, 0, dbx.Params{"profile": profileID})
+	liked, err := s.likedVideos(profileID)
+	if err != nil {
+		return nil, err
+	}
+	return tagFrequency(liked), nil
+}
+
+// likedVideos loads each liked video once, shared by topic selection and ranking in the home feed.
+func (s *Service) likedVideos(profileID string) ([]platform.Video, error) {
+	reactions, err := s.app.FindRecordsByFilter("video_reactions", "profile = {:profile} && reaction = 'like'", "-created,id", 0, 0, dbx.Params{"profile": profileID})
 	if err != nil {
 		return nil, err
 	}
@@ -217,16 +265,20 @@ func (s *Service) likedTagFrequency(profileID string) (map[string]int, error) {
 		}
 		liked = append(liked, records...)
 	}
+	return s.store.VideosOf(liked), nil
+}
+
+func tagFrequency(videos []platform.Video) map[string]int {
 	frequency := map[string]int{}
-	for _, video := range s.store.VideosOf(liked) {
+	for _, video := range videos {
 		for _, tag := range video.Tags {
 			frequency[tag]++
 		}
 	}
-	return frequency, nil
+	return frequency
 }
 
-// A nil exclusion policy keeps the ordinary feed independent of discovery preferences.
+// Candidate-query exclusions for the contextual recommendations; the home feed applies its own preferences.
 type recommendationExclusions struct {
 	profileID, anchorID string
 	hideSubscriberOnly  bool

@@ -56,7 +56,7 @@ func libRecommendations(t *testing.T, handler http.Handler, profileID, video, to
 	return libVideoIDs(libOK[[]platform.Video](t, request(t, handler, "/api/recommendations?profile="+profileID+"&video="+video, token)))
 }
 
-func TestFeedChecksTheProfileIsolatesSubscriptionsAndReadsTheCacheOnly(t *testing.T) {
+func TestFeedChecksOwnershipAndIsolatesSubscriptionCandidates(t *testing.T) {
 	t.Parallel()
 	listing := newLibListing(t)
 	app, handler := libApp(t, listing.option())
@@ -178,7 +178,7 @@ func TestFeedNeverWaitsForTheDownloaderAndShowsTheRefreshedListingNextTime(t *te
 
 func TestFeedLeavesOutPlatformsTheAccountTurnedOff(t *testing.T) {
 	t.Parallel()
-	app, handler := libApp(t, libDownloaderFailing(t))
+	app, handler := libApp(t, newLibListing(t).option())
 	owner := testUser(t, app, "feed-activation@example.test")
 	profile := profileOf(t, app, owner)
 	token := tokenOf(t, owner)
@@ -198,7 +198,7 @@ func TestFeedLeavesOutPlatformsTheAccountTurnedOff(t *testing.T) {
 
 func TestFeedLikesAreScopedToTheProfile(t *testing.T) {
 	t.Parallel()
-	app, handler := libApp(t, libDownloaderFailing(t))
+	app, handler := libApp(t, newLibListing(t).option())
 	owner := testUser(t, app, "feed-ranking@example.test")
 	first, second := libProfile(t, app, owner, "First"), libProfile(t, app, owner, "Second")
 	token := tokenOf(t, owner)
@@ -221,6 +221,32 @@ func TestFeedLikesAreScopedToTheProfile(t *testing.T) {
 	}
 	if got := libVideoIDs(libFeedOf(t, handler, second.Id, token)); !reflect.DeepEqual(got, []string{red, blue}) {
 		t.Fatalf("the likes of the second profile did not decide its ranking: %v", got)
+	}
+}
+
+func TestFeedDiscoversPublicVideosWithoutAConnectedSource(t *testing.T) {
+	t.Parallel()
+	listing := newLibListing(t)
+	listing.card(t, `{"id":"discovered1","title":"Understanding black holes","channel_id":"UCnew00000000000000000000","channel":"New creator","upload_date":"20200101"}`)
+	app, handler := libApp(t, listing.option())
+	owner := testUser(t, app, "feed-discovery@example.test")
+	profile := profileOf(t, app, owner)
+	token := tokenOf(t, owner)
+	recent := libFeedVideo(t, app, platform.Video{ID: "recentvid01", ChannelID: libChannelID("followed"), ChannelName: "Followed", Published: "2026-11-27"})
+	seed := libFeedVideo(t, app, platform.Video{ID: "likedseed01", ChannelID: libChannelID("seed"), ChannelName: "Seed", Tags: []string{"black holes"}})
+	libFollow(t, app, profile, recent)
+	libRecord(t, app, "video_reactions", map[string]any{"profile": profile.Id, "video": seed, "reaction": "like"})
+	libFail(t, libActivate(t, handler, token, "twitch", false), http.StatusOK, "")
+
+	videos := libFeedOf(t, handler, profile.Id, token)
+	if len(videos) != 2 || videos[0].Title != "Understanding black holes" || videos[0].Source != "" || videos[0].ID == "discovered1" || videos[1].ID != recent {
+		t.Fatalf("the public feed did not discover and rank an older video outside subscriptions: %+v", videos)
+	}
+	if videos[0].ChannelRecordID == libChannelRecordOf(t, app, recent) {
+		t.Fatal("discovery remained confined to the subscribed channel")
+	}
+	if n, err := app.CountRecords("source_connections"); err != nil || n != 0 {
+		t.Fatalf("public discovery required a connected account: %d, %v", n, err)
 	}
 }
 

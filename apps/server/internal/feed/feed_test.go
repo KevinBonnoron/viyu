@@ -19,6 +19,7 @@ import (
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/catalog"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
+	"github.com/KevinBonnoron/viyu/apps/server/internal/search"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/sources"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/testutil"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/ytdlp"
@@ -31,8 +32,7 @@ const (
 
 var fakeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 
-// fakePlatform implements what storing and activating need. Every method that would reach the network
-// reports a failure: a feed must be built from the cache alone.
+// fakePlatform supplies empty public searches by default; metadata, listings and playback remain forbidden.
 type fakePlatform struct {
 	platform.Platform
 	t     *testing.T
@@ -55,7 +55,7 @@ func (p fakePlatform) reached(what string) {
 }
 
 func (p fakePlatform) Search(context.Context, platform.Session, string, int) (platform.SearchPage, error) {
-	p.reached("Search")
+	// Individual discovery tests provide their own search platform.
 	return platform.SearchPage{}, nil
 }
 
@@ -133,7 +133,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.store = catalog.New(app, registry, catalog.Options{})
 	f.accounts = accounts
-	f.svc = New(app, f.store, accounts, f.refresher, nil)
+	f.svc = New(app, f.store, accounts, f.refresher, nil, NewDiscovery(search.New(registry, f.store, nil), nil))
 	t.Cleanup(func() {
 		if _, err := os.Stat(f.ytdlpRan); err == nil {
 			t.Errorf("yt-dlp ran while serving a feed")
@@ -182,11 +182,11 @@ func (f *fixture) profile(user *core.Record, name string) *core.Record {
 
 // video describes a stored video: its id is also the name of its channel unless channel is set.
 type video struct {
-	id, channel, published string
-	tags                   []string
-	subscriberOnly         bool
-	platform               string
-	owner                  string
+	id, title, channel, published string
+	tags                          []string
+	subscriberOnly                bool
+	platform                      string
+	owner                         string
 }
 
 // put saves the videos (public unless owner is set) and returns their record ids by native id.
@@ -198,7 +198,7 @@ func (f *fixture) put(videos ...video) map[string]string {
 		if p == "" {
 			p = alpha
 		}
-		listing := platform.Video{ID: v.id, Platform: p, Title: v.id, ChannelID: v.channel, ChannelName: v.channel, Tags: v.tags, Published: v.published, SubscriberOnly: v.subscriberOnly, SubscriberChecked: true}
+		listing := platform.Video{ID: v.id, Platform: p, Title: platform.First(v.title, v.id), ChannelID: v.channel, ChannelName: v.channel, Tags: v.tags, Published: v.published, SubscriberOnly: v.subscriberOnly, SubscriberChecked: true}
 		if err := f.store.StoreVideo(&listing, v.owner); err != nil {
 			f.t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ func want(ids map[string]string, natives ...string) []string {
 	return out
 }
 
-func TestFeedIsolatesSubscriptionsAndReadsTheCacheOnly(t *testing.T) {
+func TestFeedIsolatesSubscriptionCandidates(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	owner, other := f.user("feed-owner@example.test"), f.user("feed-other@example.test")
@@ -745,7 +745,7 @@ func TestRecommendationsExcludeBeforeCandidateLimits(t *testing.T) {
 					}
 				}
 			}
-			// This newest entry stays in the ordinary feed, but not in discovery.
+			// A newer restricted entry must not displace the eligible recommendations.
 			feedOnly := f.put(video{id: "feed-only", channel: scenario.channel, published: "2024-01-01", subscriberOnly: true})["feed-only"]
 			f.save("watch_history", map[string]any{"profile": profile.Id, "video": feedOnly, "watched_at": "2026-11-01 00:00:00.000Z"})
 
@@ -767,12 +767,6 @@ func TestRecommendationsExcludeBeforeCandidateLimits(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("recommendations=%v, want eligible candidates %v", got, want)
-			}
-			if scenario.subscribed {
-				feed := f.feed(owner, profile)
-				if len(feed) == 0 || feed[0] != feedOnly {
-					t.Fatalf("recommendation exclusions changed the ordinary feed: %v", feed)
-				}
 			}
 		})
 	}

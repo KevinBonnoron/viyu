@@ -68,10 +68,46 @@ func rankVideo(v platform.Video, frequency map[string]int, a *anchor, now time.T
 	return result
 }
 
-// top presents the best candidates newest first, as the feed requires.
-func top(ranked []scored, limit int) []platform.Video {
-	results := topRanked(ranked, limit, nil)
-	platform.SortByPublication(results)
+// topFeed preserves relevance while giving each channel a turn before repeating one. A single available
+// channel can still fill the feed; publication is only a tie-breaker, not the final ordering.
+func topFeed(ranked []scored, limit int) []platform.Video {
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].video.Live != ranked[j].video.Live {
+			return ranked[i].video.Live
+		}
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].video.Published > ranked[j].video.Published
+	})
+	groups := map[string]int{}
+	var queues [][]int
+	for i, candidate := range ranked {
+		key := candidate.video.Platform + ":" + candidate.video.ChannelID
+		// Unattributed videos are independent, not a synthetic channel that crowds out real ones.
+		if candidate.video.ChannelID == "" {
+			key = candidate.video.RecordID
+		}
+		group, exists := groups[key]
+		if !exists {
+			group = len(queues)
+			groups[key] = group
+			queues = append(queues, nil)
+		}
+		queues[group] = append(queues[group], i)
+	}
+	count := min(limit, len(ranked))
+	results := make([]platform.Video, 0, count)
+	for round := 0; len(results) < count; round++ {
+		for _, queue := range queues {
+			if round < len(queue) {
+				results = append(results, ranked[queue[round]].video)
+				if len(results) == count {
+					break
+				}
+			}
+		}
+	}
 	return results
 }
 
