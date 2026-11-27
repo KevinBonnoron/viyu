@@ -11,6 +11,7 @@ import { VideoGridSkeleton } from '@/components/video-grid-skeleton';
 import { VideoGrid } from '@/features/video';
 import { useAbortableEffect } from '@/hooks/useAbortableEffect';
 import { useContinueWatching } from '@/hooks/useContinueWatching';
+import { useUserSettings } from '@/hooks/useUserSettings';
 import { useLatestLike } from '@/hooks/useVideoStatuses';
 import { api } from '@/lib/api';
 import { requestError } from '@/lib/api-error';
@@ -67,6 +68,7 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
   const { t } = useI18n();
   const { latest: latestLike, isReady: likesReady, isError: likesError } = useLatestLike();
   const { data: subscriptions, isReady: subscriptionsReady, isError: subscriptionsError } = useSubscriptions();
+  const { settings } = useUserSettings();
   const [videos, setVideos] = useState<VideoResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<TranslationKey | null>(null);
@@ -145,7 +147,7 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
           }
         });
     },
-    [profileId, likesReady, subscriptionsReady, hasActivity, activityKey, retry],
+    [profileId, likesReady, subscriptionsReady, hasActivity, activityKey, retry, settings?.hide_watched, settings?.hide_subscriber_only],
   );
 
   const merged = new Map<string, VideoResult>();
@@ -214,7 +216,7 @@ function LocalFeed({ profileId, sources }: { profileId?: string; sources: Source
       )}
       {pending && combined.length === 0 && <FilterSkeleton />}
       {(rest.length > 0 || more.length > 0) && (
-        <VideoGrid videos={rest} historyActions loadWhenEmpty onEndReached={more.length > 0 && !feedPending ? loadMore : undefined} />
+        <VideoGrid videos={rest} sortByPublication={false} historyActions loadWhenEmpty onEndReached={more.length > 0 && !feedPending ? loadMore : undefined} />
       )}
       {pending && (
         <div aria-live="polite" aria-busy="true" className="space-y-4">

@@ -288,8 +288,7 @@ export const fr = {
   'history.removeError': 'Impossible de retirer cette vidéo de l’historique. Veuillez réessayer.',
   'history.removing': 'Suppression…',
   'feed.welcomeTitle': 'Bienvenue sur Viyu',
-  'feed.welcomeDescription':
-    'Recherchez et aimez des vidéos pour obtenir des recommandations locales, ou connectez YouTube dans Sources pour accéder à l’accueil de votre compte.',
+  'feed.welcomeDescription': 'Aimez des vidéos ou abonnez-vous à des chaînes pour découvrir d’autres créateurs, sans connecter de compte de plateforme.',
   'search.videos': 'Rechercher des vidéos',
   'feed.loading': 'Chargement des recommandations Viyu…',
   'feed.empty': 'Aucune recommandation pour le moment. Aimez davantage de vidéos pour améliorer votre fil.',
