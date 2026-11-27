@@ -8,7 +8,7 @@ import (
 	"github.com/KevinBonnoron/viyu/apps/server/internal/apierr"
 )
 
-// profileFeed answers GET /api/feed?profile=: the ranked videos of the profile's subscribed channels.
+// profileFeed answers GET /api/feed?profile=: the profile's diversified discovery selection.
 func (s *Server) profileFeed(e *core.RequestEvent) error {
 	profile, err := s.profileParam(e)
 	if err != nil {
