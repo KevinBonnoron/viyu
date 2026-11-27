@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Features
+
+* Discover videos outside subscriptions through cached public searches based on each profile's likes and subscription videos, without platform cookies; retain relevance order, diversify channels and apply discovery visibility preferences before the feed limit.
+
 ### Fixed
 
+* Ground discovery topics in source video titles instead of raw tag repetition, so descriptive language tags on unrelated videos do not generate language-learning recommendations; preserve genuine language-learning interests.
 * Keep video-grid skeletons until local watch history, reactions and display settings are ready; retain checked cards while subsequent pages load.
 * Wait for the subscription resume shelf before displaying the timeline, so resumable videos do not briefly appear in both lists.
 * Hide playback controls and their keyboard handlers while end-of-video suggestions or the next-episode screen are displayed; restore them on replay.
