@@ -284,7 +284,7 @@ export const en = {
   'history.removeError': 'Unable to remove this video from history. Please try again.',
   'history.removing': 'Removing…',
   'feed.welcomeTitle': 'Welcome to Viyu',
-  'feed.welcomeDescription': "Search and like videos for local recommendations, or connect YouTube from Sources for your account's Home feed.",
+  'feed.welcomeDescription': 'Like videos or follow channels to discover other creators, without connecting a platform account.',
   'search.videos': 'Search videos',
   'feed.loading': 'Loading Viyu recommendations…',
   'feed.empty': 'No recommendations yet. Like more videos to improve your feed.',
