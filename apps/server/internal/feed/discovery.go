@@ -2,16 +2,12 @@ package feed
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
-
-	"ganigeorgiev.com/pocketbase/dbx"
-	"ganigeorgiev.com/pocketbase/pocketbase/core"
 
 	"github.com/KevinBonnoron/viyu/apps/server/internal/cache"
 	"github.com/KevinBonnoron/viyu/apps/server/internal/platform"
@@ -191,53 +187,4 @@ func addQuery(queries []string, query string) []string {
 		}
 	}
 	return append(queries, query)
-}
-
-// visibleFeedVideos applies preferences before the limit, so hidden entries do not consume the selection.
-// In-progress streams remain visible regardless of history or dismissal.
-func (s *Service) visibleFeedVideos(userID, profileID string, videos []platform.Video) ([]platform.Video, error) {
-	settings, err := s.app.FindFirstRecordByFilter("settings", "user = {:user}", dbx.Params{"user": userID})
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	hideWatched, hideSubscriberOnly := false, false
-	if settings != nil {
-		hideWatched = settings.GetBool("hide_watched")
-		hideSubscriberOnly = settings.GetBool("hide_subscriber_only")
-	}
-	ids := make([]any, 0, len(videos))
-	for _, video := range videos {
-		ids = append(ids, video.RecordID)
-	}
-	hidden := map[string]bool{}
-	for chunk := range slices.Chunk(ids, queryBatch) {
-		var reactions []*core.Record
-		if err := s.app.RecordQuery("video_reactions").
-			AndWhere(dbx.HashExp{"profile": profileID, "reaction": "not_interested"}).
-			AndWhere(dbx.In("video", chunk...)).All(&reactions); err != nil {
-			return nil, err
-		}
-		for _, reaction := range reactions {
-			hidden[reaction.GetString("video")] = true
-		}
-		if hideWatched {
-			var history []*core.Record
-			if err := s.app.RecordQuery("watch_history").
-				AndWhere(dbx.HashExp{"profile": profileID, "watched": true}).
-				AndWhere(dbx.In("video", chunk...)).All(&history); err != nil {
-				return nil, err
-			}
-			for _, entry := range history {
-				hidden[entry.GetString("video")] = true
-			}
-		}
-	}
-	visible := videos[:0]
-	for _, video := range videos {
-		if (hideSubscriberOnly && video.SubscriberOnly) || (!video.Live && hidden[video.RecordID]) {
-			continue
-		}
-		visible = append(visible, video)
-	}
-	return visible, nil
 }

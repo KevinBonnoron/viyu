@@ -70,21 +70,26 @@ func (s *Service) Feed(ctx context.Context, userID, profileID string) ([]platfor
 		return nil, failed(message, err)
 	}
 	frequency := tagFrequency(liked)
-	candidates, err := s.subscriptionCandidates(ctx, userID, profileID, time.Time{}, nil)
+	visibility, err := s.feedVisibility(userID, profileID)
+	if err != nil {
+		return nil, failed(message, err)
+	}
+	seeds, candidates, err := s.homeCandidates(ctx, userID, profileID, visibility)
 	if err != nil {
 		return nil, s.gatherError(ctx, err, message)
 	}
 	// A display preference must not erase the profile's interests: watched subscription videos can
 	// still seed new discoveries. Apply visibility to the combined candidates before ranking below.
-	queries := discoveryQueries(liked, candidates)
+	queries := discoveryQueries(liked, seeds)
 	active, err := s.accounts.Activations(userID)
 	if err != nil {
 		return nil, failed(message, err)
 	}
 	hits, err := s.discovery.find(ctx, active, queries)
-	if err != nil {
+	if err != nil && (ctx.Err() != nil || len(candidates) == 0) {
 		return nil, s.gatherError(ctx, err, message)
 	}
+	// A public search outage must not discard eligible subscription videos already read from the cache.
 	bonuses := make(map[string]float64, len(hits))
 	ids := make([]string, 0, len(hits))
 	for _, hit := range hits {
@@ -107,7 +112,7 @@ func (s *Service) Feed(ctx context.Context, userID, profileID string) ([]platfor
 		}
 	}
 	candidates = append(candidates, s.store.VideosOf(discovered)...)
-	candidates, err = s.visibleFeedVideos(userID, profileID, candidates)
+	candidates, err = s.visibleFeedVideos(visibility, candidates)
 	if err != nil {
 		return nil, failed(message, err)
 	}
@@ -288,6 +293,14 @@ type recommendationExclusions struct {
 // see, from the platforms it uses. The channels whose listing is stale are scheduled for a refresh, in one
 // call; nothing else leaves the database.
 func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID string, published time.Time, exclusions *recommendationExclusions) ([]platform.Video, error) {
+	ids, err := s.subscriptionChannelIDs(ctx, userID, profileID)
+	if err != nil {
+		return nil, err
+	}
+	return s.cachedVideos(userID, ids, published, exclusions)
+}
+
+func (s *Service) subscriptionChannelIDs(ctx context.Context, userID, profileID string) ([]string, error) {
 	active, err := s.accounts.Activations(userID)
 	if err != nil {
 		return nil, err
@@ -304,7 +317,7 @@ func (s *Service) subscriptionCandidates(ctx context.Context, userID, profileID 
 	for i, channel := range channels {
 		ids[i] = channel.Id
 	}
-	return s.cachedVideos(userID, ids, published, exclusions)
+	return ids, nil
 }
 
 // anchorChannelCandidates lists the cached videos of the anchor's channel when its platform is on.
