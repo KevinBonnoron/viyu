@@ -25,6 +25,20 @@
 * Keep the visible reply count as the toggle's accessible name in both states, so speech-input users can activate it by its label.
 * Align quick-search tab labels and their keyboard shortcuts on the same text baseline.
 
+## [0.4.0](https://github.com/KevinBonnoron/viyu/compare/v0.3.0...v0.4.0) (2026-11-28)
+
+
+### Features
+
+* **client:** preserve relevance order in the discovery feed ([e3814f9](https://github.com/KevinBonnoron/viyu/commit/e3814f93bdac938b38ede9e3d004a3361037dc8a))
+* **feed:** discover public videos from grounded profile interests ([258199a](https://github.com/KevinBonnoron/viyu/commit/258199a2cd92c126db765cab32394bb29e7d6236))
+
+
+### Bug Fixes
+
+* **feed:** preserve API ranking for connected-source duplicates ([0dfb663](https://github.com/KevinBonnoron/viyu/commit/0dfb663ee76d6d8a7a18a68af430dae8b65af6ba))
+* **feed:** select eligible cached candidates before discovery ([c1b8b79](https://github.com/KevinBonnoron/viyu/commit/c1b8b7917742805ab4efd49d1862e065cc03fcaa))
+
 ## [0.3.0](https://github.com/KevinBonnoron/viyu/compare/v0.2.0...v0.3.0) (2026-11-24)
 
 
